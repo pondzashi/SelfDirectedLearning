@@ -72,7 +72,7 @@
 
 ทำแค่นี้แล้วข้ามไปหัวข้อ 3.2 และ 4 ได้เลย (ตารางไฟล์ 12 ไฟล์ด้านล่างใช้เฉพาะถ้าอยากวางแยก)
 
-ทริค: เปิด PowerShell ในโฟลเดอร์ `math-p4` แล้วพิมพ์ `Get-Content dist\Code.gs -Raw -Encoding UTF8 | Set-Clipboard` จะคัดลอกไฟล์ไว้ให้ จากนั้นกด `Ctrl+V` ในหน้า Apps Script ได้ทันที (ทำเหมือนกันกับ `dist\Index.html`)
+ทริค: เปิด PowerShell ในโฟลเดอร์ `MathLogic-Prathom` แล้วพิมพ์ `Get-Content dist\Code.gs -Raw -Encoding UTF8 | Set-Clipboard` จะคัดลอกไฟล์ไว้ให้ จากนั้นกด `Ctrl+V` ในหน้า Apps Script ได้ทันที (ทำเหมือนกันกับ `dist\Index.html`)
 
 
 ในหน้า Apps Script ทางซ้ายจะมีไฟล์ `Code.gs` อยู่แล้ว
@@ -241,7 +241,7 @@
 ## 12. สำหรับผู้พัฒนา (ไม่จำเป็นสำหรับผู้ปกครอง)
 
 ```bash
-cd math-p4
+cd MathLogic-Prathom
 node tests/run-tests.js          # สุ่มตรวจตัวสร้างโจทย์ 50 ขั้น × 300 ข้อ และ 68 แม่แบบ ด้วยการคำนวณใหม่แบบอิสระ + ตรรกะระดับ/ชุดข้อ
 node tests/gas-integration.js    # จำลองเด็กทำ 5 สัปดาห์บน Google Sheet จำลอง: วัดระดับ, ผ่าน/ไม่ผ่าน, ทบทวน, แบบวัดผล, รายงาน, อีเมล
 node tests/preview-server.js     # พรีวิวหน้าจอแท็บเล็ตที่ http://localhost:8765/?mode=daily&skill=fracdec&step=5

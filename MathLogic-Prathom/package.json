@@ -1,5 +1,5 @@
 {
-  "name": "math-p4",
+  "name": "MathLogic-Prathom",
   "private": true,
   "scripts": { "test": "node tests/run-tests.js && node tests/gas-integration.js" }
 }
