@@ -1,0 +1,5 @@
+{
+  "name": "math-p4",
+  "private": true,
+  "scripts": { "test": "node tests/run-tests.js && node tests/gas-integration.js" }
+}

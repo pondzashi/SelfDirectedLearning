@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ฝึกคณิต ป.4</title>
+<style>
+  :root {
+    --bg: #f4f7fb; --card: #ffffff; --ink: #1f2933; --muted: #62707f; --line: #d9e1ea;
+    --brand: #2563eb; --brand-ink: #ffffff; --ok: #16a34a; --ok-bg: #dcfce7; --bad: #dc2626; --bad-bg: #fee2e2;
+    --warn: #d97706; --warn-bg: #fef3c7; --key: #eef2f7; --key-press: #d6dfeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111827; --card: #1f2937; --ink: #f3f4f6; --muted: #9ca3af; --line: #374151; --brand: #60a5fa; --brand-ink: #0b1220;
+      --ok: #4ade80; --ok-bg: #14532d; --bad: #f87171; --bad-bg: #7f1d1d; --warn: #fbbf24; --warn-bg: #78350f; --key: #2b3748; --key-press: #3b4a60; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: "Noto Sans Thai", "Sarabun", Tahoma, system-ui, sans-serif; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  #app { min-height: 100%; display: flex; flex-direction: column; }
+  .center { margin: auto; text-align: center; padding: 24px 20px; max-width: 760px; width: 100%; }
+  h1 { font-size: clamp(30px, 6vw, 48px); margin: 0 0 12px; }
+  h2 { font-size: clamp(24px, 4.5vw, 36px); margin: 0 0 10px; }
+  p.lead { font-size: clamp(18px, 3.2vw, 24px); color: var(--muted); margin: 8px 0 18px; line-height: 1.5; }
+  .btn { display: inline-block; font: inherit; font-size: clamp(22px, 4vw, 30px); font-weight: 700; border: 0; border-radius: 20px; padding: 18px 40px;
+    background: var(--brand); color: var(--brand-ink); cursor: pointer; min-width: 220px; min-height: 68px; }
+  .btn:active { transform: scale(.98); }
+  .btn.alt { background: var(--key); color: var(--ink); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 18px 22px; margin: 12px 0; text-align: left; }
+  .big-emoji { font-size: 84px; line-height: 1; margin-bottom: 8px; }
+  input.nm { font: inherit; font-size: clamp(28px, 6vw, 40px); font-weight: 700; text-align: center; width: min(440px, 92%); padding: 14px 18px; border: 3px solid var(--brand); border-radius: 18px; background: var(--card); color: var(--ink); -webkit-user-select: text; user-select: text; margin: 6px 0 18px; }
+  a.lnk { color: var(--brand); font-size: 18px; text-decoration: underline; cursor: pointer; }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin: 12px 0; }
+  .chip { background: var(--key); border-radius: 999px; padding: 8px 16px; font-size: 18px; }
+  .rules { text-align: left; font-size: 18px; line-height: 1.7; }
+
+  /* แถบบน */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+  .top .sec { font-size: clamp(18px, 3vw, 24px); font-weight: 700; }
+  .top .prog { font-size: clamp(16px, 2.6vw, 20px); color: var(--muted); }
+  .timer { font-variant-numeric: tabular-nums; font-size: clamp(30px, 6vw, 46px); font-weight: 800; line-height: 1; text-align: right; }
+  .timer small { display: block; font-size: 14px; font-weight: 500; color: var(--muted); margin-top: 2px; }
+  .timer.over { color: var(--warn); }
+  .bar { height: 8px; background: var(--line); }
+  .bar > i { display: block; height: 100%; background: var(--brand); width: 0; transition: width .25s; }
+
+  /* หน้าทำข้อสอบ */
+  .stage { flex: 1; display: grid; grid-template-columns: 1fr; gap: 12px; padding: 14px; max-width: 1180px; width: 100%; margin: 0 auto; align-content: start; }
+  @media (min-width: 900px) { .stage { grid-template-columns: 1.15fr 1fr; align-items: start; } .stage .qcol { position: sticky; top: 100px; } }
+  .qbox { background: var(--card); border: 2px solid var(--line); border-radius: 24px; padding: 20px 22px; min-height: 150px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+  .qbox.ok { border-color: var(--ok); background: var(--ok-bg); } .qbox.bad { border-color: var(--bad); background: var(--bad-bg); }
+  .q { font-size: clamp(26px, 5.2vw, 46px); font-weight: 700; line-height: 1.5; text-align: center; word-break: break-word; }
+  .q.long { font-size: clamp(20px, 3.4vw, 28px); font-weight: 600; text-align: left; line-height: 1.65; }
+  .tag { align-self: center; font-size: 16px; padding: 4px 12px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-weight: 700; }
+  .fr { display: inline-flex; align-items: center; vertical-align: middle; margin: 0 .12em; }
+  .fr .w { margin-right: .15em; }
+  .fc { display: inline-flex; flex-direction: column; align-items: center; line-height: 1.1; }
+  .fc .n { border-bottom: .09em solid currentColor; padding: 0 .18em .04em; }
+  .fc .d { padding: .04em .18em 0; }
+  .hole { display: inline-block; min-width: 1.2em; border-bottom: 3px solid currentColor; }
+  .unit { font-size: .55em; font-weight: 500; margin-left: .4em; color: var(--muted); }
+  .answer { min-height: 140px; display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .abox { min-width: 200px; height: 132px; overflow: hidden; background: var(--card); border: 3px solid var(--brand); border-radius: 18px; padding: 8px 18px;
+    font-size: clamp(34px, 7vw, 56px); font-weight: 800; text-align: center; display: flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+  .abox.off { border-color: var(--line); }
+  .abox .cur { display: inline-block; width: 3px; height: 1em; background: var(--brand); margin-left: 3px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .flab { font-size: 16px; color: var(--muted); text-align: center; margin-bottom: 2px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 520px; margin: 0 auto; width: 100%; }
+  .pad button, .special button { font: inherit; font-size: clamp(30px, 6vw, 44px); font-weight: 800; height: clamp(72px, 11vh, 96px); border: 0; border-radius: 18px; background: var(--key); color: var(--ink); cursor: pointer; }
+  .pad button:active, .special button:active { background: var(--key-press); transform: scale(.97); }
+  .pad .go { background: var(--ok); color: #fff; font-size: clamp(24px, 4.6vw, 32px); } .pad .go:disabled { opacity: .4; }
+  .special { display: flex; gap: 10px; max-width: 520px; margin: 0 auto 10px; width: 100%; }
+  .special button { flex: 1; font-size: clamp(22px, 4vw, 30px); height: clamp(58px, 8.5vh, 72px); }
+  .choices { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+  .choices.lines { grid-template-columns: 1fr; }
+  .choice { font: inherit; font-size: clamp(22px, 4vw, 32px); font-weight: 700; padding: 18px 16px; min-height: 76px; border-radius: 18px; border: 3px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; text-align: center; line-height: 1.45; }
+  .choices.lines .choice { text-align: left; font-size: clamp(18px, 3.2vw, 26px); font-weight: 600; }
+  .choice.sel { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 14%, var(--card)); }
+  .gobtn { margin-top: 12px; width: 100%; }
+  .gobtn button { width: 100%; font: inherit; font-size: clamp(26px, 5vw, 34px); font-weight: 800; border: 0; border-radius: 18px; min-height: 76px; background: var(--ok); color: #fff; cursor: pointer; }
+  .gobtn button:disabled { opacity: .4; }
+  .msg { text-align: center; font-size: clamp(22px, 4vw, 30px); font-weight: 800; min-height: 40px; }
+  .msg.ok { color: var(--ok); } .msg.bad { color: var(--bad); }
+  .reveal { background: var(--warn-bg); border: 2px solid var(--warn); border-radius: 16px; padding: 12px 16px; font-size: 20px; line-height: 1.6; text-align: left; }
+  .data { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px; }
+  .data h4 { margin: 0 0 8px; text-align: center; font-size: 20px; }
+  table.tb { border-collapse: collapse; margin: 0 auto; font-size: clamp(20px, 3.6vw, 28px); }
+  table.tb td, table.tb th { border: 2px solid var(--line); padding: 8px 18px; text-align: center; }
+  table.tb th { background: var(--key); }
+  .bars { display: flex; align-items: flex-end; justify-content: center; gap: clamp(10px, 3vw, 26px); height: 220px; padding-top: 10px; }
+  .bars .b { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; font-size: clamp(16px, 2.8vw, 22px); }
+  .bars .b i { display: block; width: clamp(44px, 9vw, 76px); background: var(--brand); border-radius: 10px 10px 0 0; }
+  .bars .b b { margin-bottom: 4px; } .bars .b span { margin-top: 6px; text-align: center; }
+  .stars { font-size: 54px; letter-spacing: 6px; }
+  table.sum { width: 100%; border-collapse: collapse; font-size: 19px; }
+  table.sum td, table.sum th { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: center; }
+  table.sum td:first-child, table.sum th:first-child { text-align: left; }
+  .pill { display: inline-block; padding: 4px 14px; border-radius: 999px; font-weight: 700; font-size: 18px; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); } .pill.no { background: var(--warn-bg); color: var(--warn); }
+  .spin { width: 60px; height: 60px; border: 6px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: sp 1s linear infinite; margin: 0 auto 16px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app"><div class="center"><div class="spin"></div><p class="lead">กำลังโหลดแบบฝึก...</p></div></div>
+
+<script>
+/* ---- โค้ดตรวจคำตอบ: มาจาก Core.gs ชุดเดียวกับที่เซิร์ฟเวอร์ใช้ ---- */
+<?!= clientCore() ?>
+</script>
+<script>
+(function () {
+  'use strict';
+  var $app = document.getElementById('app');
+  var NAME = '', SET = null, RUN = null, SEC = null, buf = '', buf2 = '', activeField = 0, sel = '', locked = false, timerId = null, streak = 0, shownAt = 0;
+  var OKMSG = ['ถูกต้อง! เก่งมาก', 'ใช่เลย!', 'สุดยอด!', 'เยี่ยมไปเลย', 'แม่นมาก!', 'ดีมาก ไปต่อ!', 'ถูกแล้ว!'];
+  var BADMSG = ['ยังไม่ใช่นะ เดี๋ยวกลับมาแก้', 'ไม่เป็นไร ไปข้อต่อไปก่อน', 'เกือบแล้ว! เดี๋ยวมาลองใหม่'];
+  var FIXOK = ['แก้ถูกแล้ว! ไม่ยอมแพ้ เก่งมาก', 'ใช่แล้ว! ความพยายามได้ผล', 'เยี่ยม! แก้ได้แล้ว'];
+  var FIXBAD = ['ยังไม่ถูก ค่อย ๆ คิดอีกที', 'อีกนิดเดียว ลองใหม่นะ', 'ไม่เป็นไร ลองดูโจทย์อีกครั้ง'];
+  function rnd(a) { return a[Math.floor(Math.random() * a.length)]; }
+  function pad2(n) { return ('0' + n).slice(-2); }
+  function mmss(s) { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + pad2(s % 60); }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function fracHtml(w, n, d) {
+    return '<span class="fr">' + (w ? '<span class="w">' + w + '</span>' : '') + '<span class="fc"><span class="n">' + (n === '?' ? '<span class="hole">&nbsp;&nbsp;</span>' : n) + '</span><span class="d">' + (d === '?' ? '<span class="hole">&nbsp;&nbsp;</span>' : d) + '</span></span></span>';
+  }
+  function rich(s) {
+    return esc(s).replace(/\{(?:(\d+) )?([\d?]+)\/([\d?]+)\}/g, function (m, w, n, d) { return fracHtml(w || '', n, d); }).replace(/\n/g, '<br>');
+  }
+  function typed(s) {
+    var m = /^(?:(\d+) )?(\d+)\/(\d*)$/.exec(s);
+    if (m) return fracHtml(m[1] || '', m[2], m[3] || '▢');
+    return esc(s).replace(/ /g, '&nbsp;');
+  }
+  function show(html) { $app.innerHTML = html; window.scrollTo(0, 0); }
+  function gs(fn, arg) {
+    return new Promise(function (res, rej) {
+      var r = google.script.run.withSuccessHandler(res).withFailureHandler(rej);
+      arg === undefined ? r[fn]() : r[fn](arg);
+    });
+  }
+  function lsGet(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function label() { return NAME ? 'น้อง' + NAME : (SET && SET.child) || 'น้อง'; }
+  function cleanName(v) { return String(v || '').replace(/[<>&"']/g, '').replace(/^\s*น้อง\s*/, '').trim().slice(0, 20); }
+  function key() { return 'sdl_run_' + (SET ? SET.date : ''); }
+  function save() { try { localStorage.setItem(key(), JSON.stringify(RUN)); } catch (e) {} }
+  function setSig() { return SET.sections.map(function (s) { return s.items.map(function (i) { return i.sig || i.key; }).join(','); }).join('|').length + ':' + SET.sections[0].items.length + ':' + (SET.sections[0].items[0].sig || ''); }
+
+  /* ---------------- เริ่มต้น ---------------- */
+  function boot() {
+    retryPending();
+    gs('getTodaySet').then(function (set) {
+      NAME = lsGet('sdl_name') || '';
+      if (set.status === 'ready') { SET = set; if (!NAME) NAME = cleanName(set.childName); start(); }
+      else messageScreen(set);
+    }).catch(function (e) { show('<div class="center"><div class="big-emoji">😵</div><h2>เปิดแบบฝึกไม่สำเร็จ</h2><p class="lead">' + esc(e && e.message || e) + '</p><button class="btn" onclick="location.reload()">ลองใหม่</button></div>'); });
+  }
+  function messageScreen(s) {
+    var c = esc(NAME ? 'น้อง' + NAME : (s.child || 'หนู'));
+    if (s.status === 'done') return doneScreen(s);
+    var map = {
+      notstarted: ['🛠️', 'ยังไม่ได้ตั้งค่าเริ่มต้น', 'ให้คุณพ่อคุณแม่เปิดไฟล์ Google Sheet แล้วรันฟังก์ชัน setup ตามคู่มือก่อนนะ'],
+      notyet: ['📅', 'ยังไม่ถึงวันเริ่ม', 'เริ่มแบบวัดระดับวันที่ ' + esc(s.startDate) + ' ไว้มาใหม่นะ ' + c],
+      rest: ['🛋️', 'วันนี้พักผ่อนนะ ' + c, 'ไม่มีการบ้านคณิตวันนี้ พรุ่งนี้มาลุยกันใหม่!'],
+      error: ['😵', 'มีบางอย่างผิดพลาด', esc(s.message || '')]
+    };
+    var m = map[s.status] || map.error;
+    show('<div class="center"><div class="big-emoji">' + m[0] + '</div><h1>' + m[1] + '</h1><p class="lead">' + m[2] + '</p></div>');
+  }
+  function doneScreen(s) {
+    var sm = s.summary || {};
+    var rows = (sm.sections || []).map(function (x) { return '<tr><td>' + esc(x.id + ' ' + x.name) + '</td><td>' + x.right + '/' + x.total + '</td></tr>'; }).join('');
+    show('<div class="center"><div class="big-emoji">🎉</div><h1>วันนี้ทำเสร็จแล้ว!</h1><p class="lead">เก่งมากเลย ' + esc(NAME ? 'น้อง' + NAME : (s.child || '')) + ' พรุ่งนี้มาเจอกันใหม่</p><div class="card"><table class="sum"><tr><th>ส่วน</th><th>ถูกรอบแรก</th></tr>' + rows + '</table></div></div>');
+  }
+
+  function start() {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem(key()) || 'null'); } catch (e) {}
+    if (saved && saved.sig === setSig() && (saved.done.length || saved.sec)) {
+      RUN = saved;
+      show('<div class="center"><div class="big-emoji">👋</div><h1>กลับมาทำต่อนะ</h1><p class="lead">ระบบจำที่ทำค้างไว้ได้ — ' + esc(SET.title) + '</p><button class="btn" id="resume">ทำต่อ</button> <button class="btn alt" id="fresh">เริ่มส่วนนี้ใหม่</button></div>');
+      document.getElementById('resume').onclick = function () { SEC ? resumeSection() : nextSection(); };
+      document.getElementById('fresh').onclick = function () { SEC = RUN.sec = null; save(); nextSection(); };
+      SEC = RUN.sec;
+      return;
+    }
+    RUN = { sig: setSig(), date: SET.date, done: [], sec: null };
+    startScreen();
+  }
+  function startScreen() {
+    var chips = '<div class="chips">' + SET.sections.map(function (s) { return '<span class="chip">' + esc(s.id + ' ' + s.name) + ' · ' + s.items.length + ' ข้อ</span>'; }).join('') + '</div>';
+    var head = NAME
+      ? '<h1>สวัสดี ' + esc(label()) + '!</h1><p class="lead">' + esc(SET.title) + ' · <a class="lnk" id="chg">ไม่ใช่ชื่อนี้? เปลี่ยนชื่อ</a></p>'
+      : '<h1>สวัสดี น้อง!</h1><p class="lead">' + esc(SET.title) + '<br>พิมพ์ชื่อเล่นของหนูก่อนนะ</p><input class="nm" id="nm" maxlength="20" autocomplete="off" autocapitalize="off" placeholder="ชื่อเล่น เช่น ต้น">';
+    show('<div class="center"><div class="big-emoji">🧮</div>' + head + chips + '<p class="lead">ทำวันละ ประมาณ 30 นาที ใช้กระดาษทดช่วยได้ ตอบให้ถูกและเร็วนะ</p><button class="btn" id="go"' + (NAME ? '' : ' disabled') + '>เริ่มเลย!</button></div>');
+    var go = document.getElementById('go'), nm = document.getElementById('nm');
+    if (nm) {
+      nm.oninput = function () { go.disabled = !cleanName(nm.value); };
+      go.onclick = function () { var v = cleanName(nm.value); if (!v) return; NAME = v; lsSet('sdl_name', v); nextSection(); };
+    } else {
+      go.onclick = nextSection;
+      document.getElementById('chg').onclick = function () { NAME = ''; startScreen(); };
+    }
+  }
+
+  /* ---------------- ส่วนต่าง ๆ ---------------- */
+  function nextSection() {
+    var idx = RUN.done.length;
+    if (idx >= SET.sections.length) return finish();
+    var s = SET.sections[idx];
+    SEC = RUN.sec = { i: idx, stage: 'intro', start: 0, firstSec: 0, mainFirstSec: null, fixStart: 0, fixSec: 0, round: 0, queue: [], qpos: 0, pos: 0,
+      res: s.items.map(function () { return { ok1: false, tries: 0, revealed: false, sec: 0, errType: '', done: false }; }) };
+    save();
+    sectionIntro();
+  }
+  function curSec() { return SET.sections[SEC.i]; }
+  function sectionIntro() {
+    var s = curSec(), isDrill = s.kind === 'drill', info = '';
+    if (isDrill && s.graded) info = '<div class="rules card"><b>กติกา:</b><br>• จับเวลาจริง เป้าหมาย <b>' + mmss(s.targetSec) + '</b> นาที<br>• ข้อที่ผิดต้องแก้จนถูก (ไม่เฉลยให้ทันที)<br>• ถ้าถูกครบและทันเวลา พรุ่งนี้ได้ขั้นต่อไป</div>';
+    else if (isDrill) info = '<div class="rules card">ข้อสอบเรียงจากง่ายไปยาก ทำเท่าที่ทำได้ ไม่ต้องเครียด ระบบแค่ใช้ดูว่าควรเริ่มที่ขั้นไหน<br>เวลาอ้างอิง <b>' + mmss(s.targetSec) + '</b> นาที</div>';
+    else info = '<div class="rules card">ไม่ต้องรีบ คิดให้รอบคอบ ใช้กระดาษทดได้<br>เวลาแนะนำ <b>' + mmss(s.recSec) + '</b> นาที (เวลานี้ไม่มีผลต่อการผ่านหรือไม่ผ่าน)</div>';
+    show('<div class="center"><div class="chips"><span class="chip">ส่วน ' + esc(s.id) + ' จาก ' + SET.sections.length + '</span></div><h1>' + esc(s.name) + '</h1><p class="lead">' + esc(s.sub || '') + ' · ' + s.items.length + ' ข้อ</p>' + info + '<button class="btn" id="go">พร้อมแล้ว เริ่ม!</button></div>');
+    document.getElementById('go').onclick = function () { SEC.stage = 'first'; SEC.start = Date.now(); SEC.pos = 0; save(); renderItem(); };
+  }
+  function resumeSection() {
+    if (SEC.stage === 'intro') return sectionIntro();
+    if (SEC.stage === 'fixintro') return fixIntro();
+    renderItem();
+  }
+
+  /* ---------------- แสดงข้อ ---------------- */
+  function curIndex() { return SEC.stage === 'first' ? SEC.pos : SEC.queue[SEC.qpos]; }
+  function renderItem() {
+    var s = curSec(), idx = curIndex(), it = s.items[idx], r = SEC.res[idx];
+    buf = ''; buf2 = ''; activeField = 0; sel = ''; locked = false; shownAt = Date.now();
+    var fix = SEC.stage === 'fix', isChoice = it.type === 'choice', isDiv = it.type === 'divrem';
+    var shouldReveal = fix && r.tries >= 3;
+    if (shouldReveal) r.revealed = true;
+    var n = s.items.length, prog = fix ? ('แก้ข้อที่ ' + (SEC.qpos + 1) + '/' + SEC.queue.length + ' · รอบที่ ' + SEC.round) : ('ข้อ ' + (SEC.pos + 1) + '/' + n);
+    var pct = fix ? (SEC.qpos / Math.max(1, SEC.queue.length)) : (SEC.pos / n);
+    var dataHtml = '';
+    if (it.data) {
+      if (it.data.kind === 'table') {
+        dataHtml = '<div class="data">' + (it.data.title ? '<h4>' + esc(it.data.title) + '</h4>' : '') + '<table class="tb">' +
+          (it.data.head ? '<tr>' + it.data.head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr>' : '') +
+          it.data.rows.map(function (row) { return '<tr>' + row.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table></div>';
+      } else {
+        var mx = Math.max.apply(null, it.data.values);
+        dataHtml = '<div class="data"><h4>' + esc(it.data.title || '') + ' (หน่วย: ' + esc(it.data.unit || '') + ')</h4><div class="bars">' + it.data.values.map(function (v, k) {
+          return '<div class="b"><b>' + v + '</b><i style="height:' + Math.round(v / mx * 150) + 'px"></i><span>' + esc(it.data.labels[k]) + '</span></div>';
+        }).join('') + '</div></div>';
+      }
+    }
+    var qhtml = rich(it.q) + (it.unit && !isChoice ? '' : '');
+    var longQ = String(it.q).length > 40 || it.q.indexOf('\n') >= 0;
+    var tag = it.review ? '<div class="tag">♻ ทบทวนข้อที่เคยพลาด</div>' : '';
+    var revealHtml = '';
+    if (shouldReveal) {
+      var ansTxt = isChoice ? esc(it.choices[+it.ans - 1]) : isDiv ? it.ans.split('|')[0] + ' เศษ ' + it.ans.split('|')[1] : rich(it.type === 'frac' ? ('{' + it.ans + '}') : it.ans);
+      revealHtml = '<div class="reveal"><b>ดูวิธีคิดนะ:</b> ' + rich(it.explain || '') + '<br><b>คำตอบคือ</b> ' + (it.ans.indexOf('/') >= 0 && it.type === 'frac' ? ansTxt : ansTxt) + ' — ลองกดคำตอบนี้เองอีกครั้ง</div>';
+    }
+    var input = '';
+    if (isChoice) {
+      var lines = !!it.lineMode;
+      input = '<div class="choices' + (lines ? ' lines' : '') + '" id="choices">' + it.choices.map(function (c, k) {
+        return '<button class="choice" data-k="' + (k + 1) + '">' + (lines ? '<b>' + (k + 1) + '.</b> ' : '') + rich(c) + '</button>';
+      }).join('') + '</div><div class="gobtn"><button id="submit" disabled>ตอบ ✓</button></div>';
+    } else {
+      var special = '<div class="special"><button data-k="clr">ล้าง</button>' +
+        (it.type === 'dec' ? '<button data-k=".">.</button>' : '') + (it.type === 'frac' ? '<button data-k="/">/</button><button data-k=" ">เว้นวรรค</button>' : '') + '</div>';
+      var boxes;
+      if (isDiv) boxes = '<div><div class="flab">ผลหาร</div><div class="abox" id="abox0"></div></div><div style="font-size:34px;font-weight:800">เศษ</div><div><div class="flab">เศษ</div><div class="abox off" id="abox1"></div></div>';
+      else boxes = '<div class="abox" id="abox0"></div>' + (it.unit ? '<span class="unit" style="font-size:26px">' + esc(it.unit) + '</span>' : '');
+      input = '<div class="answer">' + boxes + '</div><div class="msg" id="msg"></div>' + special + '<div class="pad">' +
+        [7, 8, 9, 4, 5, 6, 1, 2, 3].map(function (d) { return '<button data-k="' + d + '">' + d + '</button>'; }).join('') +
+        '<button data-k="del">⌫</button><button data-k="0">0</button><button class="go" id="submit" disabled>ตอบ ✓</button></div>';
+    }
+    var isA = s.kind === 'drill';
+    var tgt = (isA && SEC.stage === 'first') ? s.targetSec : 0;
+    show('<div class="top"><div><div class="sec">' + esc(s.id + ' ' + s.name) + '</div><div class="prog">' + esc(prog) + '</div></div><div class="timer" id="timer">0:00<small id="tsub"></small></div></div>' +
+      '<div class="bar"><i style="width:' + Math.round(pct * 100) + '%"></i></div>' +
+      '<div class="stage"><div class="qcol"><div class="qbox" id="qbox">' + tag + (dataHtml || '') + '<div class="q' + (longQ ? ' long' : '') + '">' + qhtml + '</div>' + (isChoice ? '' : '') + '</div>' +
+      '<div class="msg" id="fb" style="margin-top:10px"></div>' + revealHtml + '</div><div class="acol">' + input + '</div></div>');
+    wire(it);
+    drawBoxes(it);
+    startTimer();
+  }
+
+  function drawBoxes(it) {
+    if (it.type === 'choice') return;
+    var b0 = document.getElementById('abox0'), b1 = document.getElementById('abox1');
+    var cur = '<span class="cur"></span>';
+    if (it.type === 'divrem') {
+      b0.innerHTML = typed(buf) + (activeField === 0 ? cur : ''); b1.innerHTML = typed(buf2) + (activeField === 1 ? cur : '');
+      b0.classList.toggle('off', activeField !== 0); b1.classList.toggle('off', activeField !== 1);
+      document.getElementById('submit').disabled = !(buf && (activeField === 0 || buf2));
+      document.getElementById('submit').textContent = activeField === 0 ? 'ต่อไป →' : 'ตอบ ✓';
+    } else {
+      b0.innerHTML = typed(buf) + cur;
+      document.getElementById('submit').disabled = !buf;
+    }
+  }
+  function curVal() { var it = curItem(); return it.type === 'divrem' ? buf + '|' + buf2 : it.type === 'choice' ? sel : buf; }
+  function curItem() { return curSec().items[curIndex()]; }
+  function press(k) {
+    if (locked) return;
+    var it = curItem();
+    var target = it.type === 'divrem' && activeField === 1 ? 'buf2' : 'buf';
+    var v = target === 'buf' ? buf : buf2;
+    if (k === 'del') v = v.slice(0, -1);
+    else if (k === 'clr') v = '';
+    else if (/^\d$/.test(k)) { if (v.length < 14) v += k; }
+    else if (k === '.' && it.type === 'dec' && v.indexOf('.') < 0) v += '.';
+    else if (k === '/' && it.type === 'frac' && v.indexOf('/') < 0 && v.length && !/ $/.test(v)) v += '/';
+    else if (k === ' ' && it.type === 'frac' && v.indexOf(' ') < 0 && v.indexOf('/') < 0 && /\d$/.test(v)) v += ' ';
+    if (target === 'buf') buf = v; else buf2 = v;
+    drawBoxes(it);
+  }
+  function wire(it) {
+    var root = $app;
+    root.querySelectorAll('[data-k]').forEach(function (b) {
+      if (it.type === 'choice') b.onclick = function () {
+        if (locked) return;
+        sel = b.getAttribute('data-k');
+        root.querySelectorAll('.choice').forEach(function (x) { x.classList.toggle('sel', x === b); });
+        document.getElementById('submit').disabled = false;
+      };
+      else b.onclick = function () { press(b.getAttribute('data-k')); };
+    });
+    document.getElementById('submit').onclick = submit;
+    if (it.type === 'divrem') {
+      document.getElementById('abox0').onclick = function () { activeField = 0; drawBoxes(it); };
+      document.getElementById('abox1').onclick = function () { if (buf) { activeField = 1; drawBoxes(it); } };
+    }
+  }
+  document.addEventListener('keydown', function (e) {
+    if (!SEC || (SEC.stage !== 'first' && SEC.stage !== 'fix') || locked) return;
+    var k = e.key;
+    if (/^\d$/.test(k) || k === '.' || k === '/' || k === ' ') { press(k); e.preventDefault(); }
+    else if (k === 'Backspace') { press('del'); e.preventDefault(); }
+    else if (k === 'Enter') { var b = document.getElementById('submit'); if (b && !b.disabled) submit(); e.preventDefault(); }
+  });
+
+  /* ---------------- ตรวจคำตอบ ---------------- */
+  function submit() {
+    if (locked) return;
+    var s = curSec(), idx = curIndex(), it = s.items[idx], r = SEC.res[idx], fix = SEC.stage === 'fix';
+    if (it.type === 'divrem' && activeField === 0) { if (buf) { activeField = 1; drawBoxes(it); } return; }
+    var val = curVal();
+    if (it.type !== 'choice' && it.type !== 'divrem' && !buf) return;
+    if (it.type === 'choice' && !sel) return;
+    locked = true;
+    var sec = (Date.now() - shownAt) / 1000, ok = checkAnswer(it, val);
+    r.tries++;
+    var box = document.getElementById('qbox'), fb = document.getElementById('fb');
+    if (!fix) {
+      r.sec = sec; r.ok1 = ok;
+      if (!ok) r.errType = classifyError(it, val, sec);
+      streak = ok ? streak + 1 : 0;
+      if (s.kind === 'drill' && SEC.mainFirstSec == null && SEC.pos === (s.mainCount || s.items.length) - 1) SEC.mainFirstSec = (Date.now() - SEC.start) / 1000;
+    } else if (ok) r.done = true;
+    box.classList.add(ok ? 'ok' : 'bad');
+    var m = fix ? (ok ? rnd(FIXOK) : rnd(FIXBAD)) : (ok ? (streak > 0 && streak % 5 === 0 ? 'ถูกติดกัน ' + streak + ' ข้อแล้ว 🔥' : rnd(OKMSG)) : rnd(BADMSG));
+    fb.className = 'msg ' + (ok ? 'ok' : 'bad'); fb.textContent = (ok ? '✓ ' : '✗ ') + m;
+    if (navigator.vibrate) try { navigator.vibrate(ok ? 20 : [40, 40, 40]); } catch (e) {}
+    save();
+    var delay = s.kind === 'drill' ? (ok ? 420 : 750) : (ok ? 900 : 1400);
+    setTimeout(advance, delay);
+  }
+  function advance() {
+    var s = curSec();
+    if (SEC.stage === 'first') {
+      SEC.pos++;
+      if (s.kind === 'drill' && s.graded !== false && false) {}
+      if (SEC.pos >= s.items.length) return endFirst(false);
+      save(); return renderItem();
+    }
+    SEC.qpos++;
+    if (SEC.qpos >= SEC.queue.length) {
+      var rest = SEC.queue.filter(function (i) { return !SEC.res[i].done; });
+      if (!rest.length) return endFix();
+      SEC.round++; SEC.queue = rest; SEC.qpos = 0;
+    }
+    save(); renderItem();
+  }
+  function checkCap() {
+    var s = curSec();
+    if (SEC && SEC.stage === 'first' && s.kind === 'drill' && SET.aMaxSec && (Date.now() - SEC.start) / 1000 > SET.aMaxSec && !locked) {
+      for (var i = SEC.pos; i < s.items.length; i++) { var r = SEC.res[i]; if (!r.tries) { r.ok1 = false; r.errType = 'หมดเวลา'; r.sec = SET.aMaxSec; } }
+      if (SEC.mainFirstSec == null) SEC.mainFirstSec = SET.aMaxSec;
+      endFirst(true);
+    }
+  }
+  function endFirst(capped) {
+    stopTimer();
+    var s = curSec();
+    SEC.firstSec = (Date.now() - SEC.start) / 1000;
+    if (SEC.mainFirstSec == null) SEC.mainFirstSec = SEC.firstSec;
+    SEC.queue = []; SEC.res.forEach(function (r, i) { if (!r.ok1) SEC.queue.push(i); });
+    if (!SEC.queue.length) { SEC.round = 0; return sectionDone(); }
+    SEC.stage = 'fixintro'; save(); fixIntro(capped);
+  }
+  function fixIntro(capped) {
+    show('<div class="center"><div class="big-emoji">🔧</div><h1>มาแก้ข้อที่ยังไม่ถูกกัน</h1><p class="lead">' + (capped ? 'หมดเวลารอบแรกแล้ว ' : '') + 'มี ' + SEC.queue.length + ' ข้อที่ต้องลองใหม่ ระบบไม่เฉลยทันที ค่อย ๆ คิดนะ ถ้าติดจริง ๆ จะมีคำใบ้ให้</p><button class="btn" id="go">แก้เลย!</button></div>');
+    document.getElementById('go').onclick = function () { SEC.stage = 'fix'; SEC.round = 1; SEC.qpos = 0; SEC.fixStart = Date.now(); save(); renderItem(); };
+  }
+  function endFix() {
+    stopTimer();
+    SEC.fixSec = (Date.now() - SEC.fixStart) / 1000;
+    sectionDone();
+  }
+
+  function sectionResult() {
+    var s = curSec();
+    var items = s.items.map(function (it, i) {
+      var r = SEC.res[i];
+      return { key: it.key, cat: it.cat, tag: it.tag, sig: it.sig, q: it.q, ok1: r.ok1, tries: r.tries || 1, revealed: r.revealed, sec: r.sec, errType: r.errType,
+        review: !!it.review, reviewId: it.reviewId || '', cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '' };
+    });
+    var first = s.kind === 'drill' ? (SEC.mainFirstSec != null ? SEC.mainFirstSec : SEC.firstSec) : SEC.firstSec;
+    return { id: s.id, name: s.name, kind: s.kind, skill: s.skill || '', items: items, firstSec: first, correctionSec: SEC.fixSec, totalSec: first + SEC.fixSec,
+      rounds: SEC.round ? SEC.round : 0, targetSec: s.targetSec || 0, recSec: s.recSec || 0, mainCount: s.mainCount || items.length };
+  }
+  function sectionDone() {
+    stopTimer();
+    var res = sectionResult(), n = res.items.length, right = res.items.filter(function (i) { return i.ok1; }).length, p = n ? right / n : 0;
+    var stars = p >= 0.9 ? '⭐⭐⭐' : p >= 0.7 ? '⭐⭐' : '⭐';
+    var msg = p >= 0.9 ? 'เก่งมาก แม่นสุด ๆ!' : p >= 0.7 ? 'ดีมากเลย ไปต่ออีกนิดนะ' : 'ไม่เป็นไร ทุกข้อที่แก้ได้คือการเรียนรู้';
+    var timeInfo = '';
+    if (res.kind === 'drill' && res.targetSec) {
+      var within = res.totalSec <= res.targetSec;
+      timeInfo = '<p class="lead">เวลารวม <b>' + mmss(res.totalSec) + '</b> / เป้าหมาย ' + mmss(res.targetSec) + (SET.mode === 'daily' ? (within ? ' ✓ ทันเวลา!' : ' — ยังไม่ทัน ลองใหม่พรุ่งนี้นะ') : '') + '</p>';
+    } else timeInfo = '<p class="lead">ใช้เวลา ' + mmss(res.totalSec) + ' นาที</p>';
+    RUN.done.push(res); RUN.sec = null; SEC = null; save();
+    gs('submitSection', { date: SET.date, mode: SET.mode, section: res }).catch(function () {});
+    var last = RUN.done.length >= SET.sections.length;
+    show('<div class="center"><div class="stars">' + stars + '</div><h1>จบส่วน ' + esc(res.id) + ' แล้ว!</h1><p class="lead">ถูกรอบแรก <b>' + right + '/' + n + '</b>' + (res.rounds ? ' · แก้ ' + res.rounds + ' รอบ' : ' · ไม่ต้องแก้เลย') + '</p>' + timeInfo + '<p class="lead">' + msg + '</p><button class="btn" id="go">' + (last ? 'ส่งผลและดูสรุป' : 'ส่วนต่อไป →') + '</button></div>');
+    document.getElementById('go').onclick = nextSection;
+  }
+
+  /* ---------------- จบชุด ---------------- */
+  function finish() {
+    var payload = { childName: NAME, date: SET.date, mode: SET.mode, placementDay: SET.placementDay == null ? null : SET.placementDay, title: SET.title,
+      totalSec: RUN.done.reduce(function (s, x) { return s + x.totalSec; }, 0), sections: RUN.done };
+    show('<div class="center"><div class="spin"></div><p class="lead">กำลังบันทึกผล...</p></div>');
+    try { localStorage.setItem('sdl_pending', JSON.stringify(payload)); } catch (e) {}
+    gs('submitSession', payload).then(function (r) {
+      try { localStorage.removeItem('sdl_pending'); localStorage.removeItem(key()); } catch (e) {}
+      finalScreen(r.summary || {});
+    }).catch(function (e) {
+      show('<div class="center"><div class="big-emoji">📶</div><h2>บันทึกผลไม่สำเร็จ</h2><p class="lead">ผลยังเก็บไว้ในเครื่องนี้ ตรวจสัญญาณอินเทอร์เน็ตแล้วกดลองใหม่</p><button class="btn" id="go">ลองใหม่</button></div>');
+      document.getElementById('go').onclick = finish;
+    });
+  }
+  function retryPending() {
+    var raw = null; try { raw = localStorage.getItem('sdl_pending'); } catch (e) {}
+    if (!raw) return;
+    gs('submitSession', JSON.parse(raw)).then(function () { try { localStorage.removeItem('sdl_pending'); } catch (e) {} }).catch(function () {});
+  }
+  function finalScreen(sm) {
+    var rows = (sm.sections || []).map(function (x) {
+      return '<tr><td>' + esc(x.id + ' ' + x.name) + '</td><td>' + x.right + '/' + x.total + '</td><td>' + mmss(x.totalSec) + '</td><td>' + x.rounds + '</td></tr>';
+    }).join('');
+    var pass = '';
+    if (sm.drill) pass = '<p>' + (sm.drill.pass ? '<span class="pill ok">🎉 ผ่านขั้นนี้แล้ว!</span>' : '<span class="pill no">ยังไม่ผ่านขั้นนี้ — พรุ่งนี้ลองอีกครั้ง</span>') + '</p>';
+    var pl = '';
+    if (sm.placement) pl = '<div class="card"><b>ขั้นเริ่มต้นที่ระบบกำหนดให้:</b><br>' + Object.keys(sm.placement.starts).map(function (k) { var v = sm.placement.starts[k]; return '• ' + esc(({ addsub: 'บวกลบ', mul: 'คูณ', div: 'หาร', fracdec: 'เศษส่วนทศนิยม' })[k]) + ' ขั้น ' + v.no; }).join('<br>') + '</div>';
+    show('<div class="center"><div class="big-emoji">🏆</div><h1>เก่งมาก ' + esc(label()) + '!</h1><p class="lead">วันนี้ทำครบแล้ว ผลถูกส่งให้คุณพ่อคุณแม่เรียบร้อย</p>' + pass +
+      '<div class="card"><table class="sum"><tr><th>ส่วน</th><th>ถูกรอบแรก</th><th>เวลา</th><th>รอบแก้</th></tr>' + rows + '</table></div>' + pl +
+      '<p class="lead">' + esc(sm.note || '') + '</p></div>');
+  }
+
+  /* ---------------- นาฬิกา ---------------- */
+  function startTimer() {
+    stopTimer();
+    var s = curSec();
+    function tick() {
+      var el = document.getElementById('timer'); if (!el || !SEC) return;
+      var fix = SEC.stage === 'fix', secs, sub = '', over = false;
+      if (fix) { secs = (Date.now() - SEC.fixStart) / 1000; sub = 'เวลาแก้'; }
+      else {
+        secs = (Date.now() - SEC.start) / 1000;
+        if (s.kind === 'drill' && s.targetSec) { sub = 'เป้า ' + mmss(s.targetSec); over = secs > s.targetSec; }
+        else sub = 'แนะนำ ' + mmss(s.recSec || 0);
+      }
+      el.firstChild.nodeValue = mmss(secs); el.classList.toggle('over', over);
+      var sb = document.getElementById('tsub'); if (sb) sb.textContent = sub;
+      checkCap();
+    }
+    tick(); timerId = setInterval(tick, 250);
+  }
+  function stopTimer() { if (timerId) clearInterval(timerId); timerId = null; }
+
+  boot();
+})();
+</script>
+</body>
+</html>

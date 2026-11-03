@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pretest-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps-script/tests/preview-server.js"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "pretest-preview-full",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps-script/tests/preview-server.js"
+      ],
+      "port": 8788,
+      "env": {
+        "PORT": "8788",
+        "CSV": "questions_full.csv"
+      }
+    }
+  ]
+}

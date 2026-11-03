@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<title><?= title ?></title>
+<?!= include('Styles') ?>
+<style>
+.topbar { position: sticky; top: 0; z-index: 20; background: var(--card); border-bottom: 1px solid var(--line); }
+.topbar .in { max-width: 980px; margin: 0 auto; padding: 8px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.clock { font-variant-numeric: tabular-nums; font-size: 1.5rem; font-weight: 700; padding: 2px 12px; border-radius: 10px; background: var(--brand-soft); color: var(--brand); }
+.clock.amber { background: var(--yellow-soft); color: var(--yellow); }
+.clock.red { background: var(--red-soft); color: var(--red); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .6; } }
+.banner { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 30; padding: 10px 20px; border-radius: 10px; font-weight: 700; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+.banner.amber { background: var(--warn); color: #111; } .banner.red { background: var(--red); color: #fff; }
+.layout { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 900px) { .layout { grid-template-columns: 1fr 240px; } .drawer-btn { display: none; } .panel { display: block !important; } }
+.panel { display: none; }
+.panel.open { display: block; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 6px; }
+.num { position: relative; min-height: 42px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-weight: 600; }
+.num.done { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); }
+.num.skip { background: var(--yellow-soft); border-color: var(--yellow); }
+.num.cur { outline: 3px solid var(--brand); outline-offset: 1px; }
+.num .flag { position: absolute; top: -6px; right: -3px; font-size: .8rem; }
+.choice { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; margin: 8px 0; padding: 12px 14px; border: 2px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); min-height: 52px; }
+.choice:hover:not([disabled]) { border-color: var(--brand); }
+.choice.sel { border-color: var(--brand); background: var(--brand-soft); }
+.choice.ok { border-color: var(--green); background: var(--green-soft); } .choice.bad { border-color: var(--red); background: var(--red-soft); }
+.choice .lt { flex: 0 0 30px; height: 30px; border-radius: 50%; background: var(--line); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
+.choice.sel .lt { background: var(--brand); color: var(--brand-ink); }
+.passage { background: var(--none-soft); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.why { font-size: .9rem; color: var(--muted); margin-top: 4px; }
+.expl { border-left: 4px solid var(--brand); background: var(--brand-soft); padding: 10px 14px; border-radius: 8px; margin-top: 10px; }
+.stat { text-align: center; padding: 10px 6px; border-radius: 10px; background: var(--none-soft); flex: 1 1 90px; }
+.stat b { display: block; font-size: 1.5rem; }
+.big { font-size: 3rem; font-weight: 800; line-height: 1.1; }
+.modegrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.mode { text-align: left; padding: 14px; border: 2px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); }
+.mode.on { border-color: var(--brand); background: var(--brand-soft); }
+.mode[disabled] { opacity: .5; }
+.steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.step { padding: 2px 10px; border-radius: 999px; font-size: .8rem; background: var(--none-soft); color: var(--muted); }
+.step.cur { background: var(--brand); color: var(--brand-ink); } .step.done { text-decoration: line-through; }
+</style>
+</head>
+<body>
+<div id="top"></div>
+<div id="banner" class="banner hidden"></div>
+<div id="app" class="wrap"><div class="spinner">กำลังโหลด…</div></div>
+<div id="overlay"></div>
+<script>
+var TOKEN = '';
+var S = { state: null, cur: 0, selected: null, lastReport: 0, warned: {}, expiring: false, deadline: 0, saveChain: Promise.resolve(), unsaved: 0, imgCache: {}, reviewData: null };
+
+// ---------- ตัวช่วย ----------
+function rpc(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (ok, bad) {
+    var r = google.script.run.withSuccessHandler(ok).withFailureHandler(function (e) { bad(e); });
+    r[fn].apply(r, args);
+  });
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function rich(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'); }
+function $(id) { return document.getElementById(id); }
+function app(html) { $('app').innerHTML = html; window.scrollTo(0, 0); }
+function toast(msg, ms) {
+  var t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
+  setTimeout(function () { t.remove(); }, ms || 3500);
+}
+function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function mmss(ms) { var s = Math.max(0, Math.ceil(ms / 1000)); var m = Math.floor(s / 60); return (m < 10 ? '0' : '') + m + ':' + (s % 60 < 10 ? '0' : '') + (s % 60); }
+function dur(sec) { var m = Math.floor(sec / 60), s = sec % 60; return m + ' นาที ' + s + ' วินาที'; }
+function letters(subject) { return subject === 'thai_social' ? ['ก', 'ข', 'ค', 'ง'] : ['A', 'B', 'C', 'D']; }
+function curSubject() { return S.state.subjects[S.state.currentIdx].subject; }
+function modal(html) {
+  $('overlay').innerHTML = '<div class="modal-bg"><div class="modal">' + html + '</div></div>';
+}
+function closeModal() { $('overlay').innerHTML = ''; }
+function fail(e) { app('<div class="card"><h2>เกิดข้อผิดพลาด</h2><p class="text">' + esc(e && e.message ? e.message : e) + '</p><button class="btn" data-act="reload">ลองใหม่</button></div>'); }
+
+// ---------- เริ่มต้น ----------
+function boot() {
+  // อ่าน ?t= จาก URL ของหน้าหลัก (หน้าเว็บ Apps Script รันใน iframe จึงใช้ google.script.url)
+  google.script.url.getLocation(function (loc) {
+    TOKEN = String((loc && loc.parameter && loc.parameter.t) || '');
+    bootWithToken();
+  });
+}
+function bootWithToken() {
+  if (!TOKEN) { app('<div class="card"><h2>ไม่พบลิงก์สอบ</h2><p>กรุณาเปิดจากลิงก์ที่ผู้ปกครองให้</p></div>'); return; }
+  rpc('api_open', TOKEN).then(route).catch(fail);
+}
+function route(info) {
+  S.state = info;
+  if (info.phase === 'invalid') app('<div class="card"><h2>ลิงก์นี้ใช้ไม่ได้</h2><p>ลิงก์ไม่ถูกต้องหรือถูกยกเลิก กรุณาขอลิงก์ใหม่จากผู้ปกครอง</p></div>');
+  else if (info.phase === 'lobby') renderLobby(info);
+  else if (info.phase === 'exam') startExamView(info);
+  else if (info.phase === 'done') renderDone(info);
+}
+
+// ---------- หน้าแรก / เลือกโหมด ----------
+var L = { mode: '', subject: '', skills: [], count: 10, minutes: 10 };
+function renderLobby(info) {
+  var lock = info.locked || {};
+  if (lock.mode) L.mode = lock.mode;
+  if (lock.subject) L.subject = lock.subject;
+  if (!L.subject) L.subject = 'english';
+  var modes = [
+    ['mock_subject', 'Mock รายวิชา', 'สอบวิชาเดียวแบบจับเวลาจริง'],
+    ['mock_full', 'Mock เต็มชุด', 'สอบ 3 วิชาต่อกัน แยกเวลาแต่ละวิชา'],
+    ['drill_auto', 'Drill อัตโนมัติ', 'ฝึกเฉพาะทักษะที่ยังอ่อน (ต้องเคยทำ Mock วิชานั้นก่อน)'],
+    ['drill_custom', 'Drill เลือกเอง', 'เลือกทักษะ จำนวนข้อ และเวลาเอง เห็นเฉลยทันทีหลังตอบ']
+  ];
+  var h = '<h1>' + esc(info.title) + '</h1>';
+  if (info.label) h += '<p class="muted">' + esc(info.label) + '</p>';
+  if (!lock.mode) {
+    h += '<div class="card"><h2>เลือกแบบการสอบ</h2><div class="modegrid">' + modes.map(function (m) {
+      return '<button class="mode' + (L.mode === m[0] ? ' on' : '') + '" data-act="mode" data-v="' + m[0] + '"><b>' + m[1] + '</b><br><span class="small muted">' + m[2] + '</span></button>';
+    }).join('') + '</div></div>';
+  } else {
+    h += '<div class="card"><b>' + esc((modes.filter(function (m) { return m[0] === lock.mode; })[0] || [0, lock.mode])[1]) + '</b></div>';
+  }
+  if (L.mode === 'mock_full') {
+    h += '<div class="card"><h3>เวลาแต่ละวิชา</h3>' + info.subjects.map(function (s) { return '<div>' + esc(s.label) + ' — ' + s.minutes + ' นาที (' + s.questions + ' ข้อ)</div>'; }).join('') + '</div>';
+  } else if (L.mode) {
+    var subjOpts = info.subjects.map(function (s) {
+      var dis = L.mode === 'drill_auto' && !s.drillAutoReady;
+      return '<option value="' + s.subject + '"' + (L.subject === s.subject ? ' selected' : '') + '>' + esc(s.label) + (dis ? ' (ยังไม่มีผล Mock)' : '') + '</option>';
+    }).join('');
+    h += '<div class="card"><h3>วิชา</h3>';
+    if (lock.subject) h += '<b>' + esc(info.subjects.filter(function (s) { return s.subject === lock.subject; })[0].label) + '</b>';
+    else h += '<select data-act="subject">' + subjOpts + '</select>';
+    var sub = info.subjects.filter(function (s) { return s.subject === L.subject; })[0];
+    if (L.mode === 'mock_subject') h += '<p class="muted">' + sub.questions + ' ข้อ เวลา ' + sub.minutes + ' นาที</p>';
+    if (L.mode === 'drill_auto') {
+      if (!sub.drillAutoReady) h += '<p class="b-red badge">Drill อัตโนมัติใช้ได้หลังทำ Mock วิชานี้อย่างน้อย 1 ครั้ง ลองเลือก "Drill เลือกเอง" หรือทำ Mock ก่อน</p>';
+      else h += '<p class="muted">ระบบจะเลือกข้อจากทักษะที่ยังอ่อน ' + info.drillDefault.total + ' ข้อ (ทักษะที่อ่อนกว่าได้มากกว่า)</p>';
+    }
+    if (L.mode === 'drill_custom') {
+      h += '<h3>ทักษะ</h3>' + sub.skills.map(function (k) {
+        return '<label style="display:block;margin:4px 0"><input type="checkbox" data-act="skill" value="' + esc(k) + '"' + (L.skills.indexOf(k) >= 0 ? ' checked' : '') + '> ' + esc(k) + '</label>';
+      }).join('') + '<p class="small muted">ไม่เลือกเลย = ทุกทักษะ</p>' +
+        '<div class="row"><label>จำนวนข้อ <input type="number" min="1" max="60" value="' + L.count + '" data-act="count" style="width:80px"></label>' +
+        '<label>เวลา (นาที) <input type="number" min="1" max="120" value="' + L.minutes + '" data-act="minutes" style="width:80px"></label></div>';
+    }
+    h += '</div>';
+  }
+  var canStart = L.mode && !(L.mode === 'drill_auto' && !info.subjects.filter(function (s) { return s.subject === L.subject; })[0].drillAutoReady);
+  h += '<div class="card"><p><b>ก่อนกดเริ่ม:</b> เมื่อกด "เริ่มสอบ" เวลาจะเดินทันที และเดินต่อแม้ปิดหน้านี้หรือรีเฟรช ลิงก์นี้เริ่มสอบได้ครั้งเดียว (กลับมาทำต่อได้ด้วยลิงก์เดิมจนกว่าจะหมดเวลา)</p>' +
+    '<button class="btn primary" data-act="start"' + (canStart ? '' : ' disabled') + '>เริ่มสอบ</button></div>';
+  app(h);
+}
+function startNow() {
+  var info = S.state;
+  var choice = { mode: L.mode, subject: L.subject, skills: L.skills, count: L.count, minutes: L.minutes };
+  $('app').innerHTML = '<div class="spinner">กำลังสุ่มข้อสอบ…</div>';
+  rpc('api_start', TOKEN, choice).then(route).catch(function (e) { fail(e); });
+}
+
+// ---------- หน้าทำข้อสอบ ----------
+function startExamView(st) {
+  S.state = st; S.cur = firstOpenIndex(st); S.selected = null; S.warned = {}; S.expiring = false;
+  setClock(st.remainingMs);
+  S.lastReport = performance.now();
+  renderExam();
+}
+function firstOpenIndex(st) {
+  for (var i = 0; i < st.questions.length; i++) if (!st.questions[i].chosen && !st.questions[i].reveal) return i;
+  return 0;
+}
+function setClock(remainingMs) { S.deadline = performance.now() + remainingMs; }
+function takeDelta() { var n = performance.now(); var d = Math.round(n - S.lastReport); S.lastReport = n; return d; }
+
+function renderExam() {
+  var st = S.state, q = st.questions[S.cur], sub = curSubject(), lt = letters(sub);
+  if (!q) { app('<div class="card">ไม่มีข้อสอบในวิชานี้</div>'); return; }
+  var done = st.questions.filter(function (x) { return x.chosen; }).length;
+  var top = '<div class="topbar"><div class="in"><b class="grow">' + esc(st.subjects[st.currentIdx].label) + (st.drill ? ' · Drill' : '') +
+    ' <span class="muted small">ข้อ ' + (S.cur + 1) + '/' + st.questions.length + ' · ตอบแล้ว ' + done + '</span></b>' +
+    '<span id="save" class="small muted"></span><span id="clock" class="clock">--:--</span></div></div>';
+  var steps = st.subjects.length > 1 ? '<div class="steps" style="margin:10px 0">' + st.subjects.map(function (s, i) {
+    return '<span class="step ' + (i === st.currentIdx ? 'cur' : (i < st.currentIdx ? 'done' : '')) + '">' + (i + 1) + '. ' + esc(s.label) + '</span>'; }).join('') + '</div>' : '';
+  var revealed = !!q.reveal;
+  var sel = revealed ? q.chosen : (S.selected != null ? S.selected : q.chosen);
+  var choices = q.choices.map(function (c, i) {
+    var cls = 'choice';
+    if (revealed) { if (c.k === q.reveal.answer) cls += ' ok'; else if (c.k === q.chosen) cls += ' bad'; }
+    else if (sel === c.k) cls += ' sel';
+    var why = revealed ? '<div class="why">' + rich(q.reveal.why[c.k] || '') + '</div>' : '';
+    return '<button class="' + cls + '" data-act="choose" data-k="' + c.k + '"' + (revealed ? ' disabled' : '') + '><span class="lt">' + lt[i] +
+      '</span><span class="grow text">' + rich(c.t) + why + '</span></button>';
+  }).join('');
+  var body = '';
+  if (q.passage) body += '<div class="passage text">' + rich(q.passage) + '</div>';
+  body += '<div class="text" style="font-size:1.1rem;margin-bottom:6px">' + rich(q.stem) + '</div>';
+  if (q.hasImage) body += '<img id="qimg" class="fig" alt="รูปประกอบโจทย์" style="min-height:40px">';
+  body += choices;
+  if (revealed) {
+    body += '<div class="expl"><b>' + (q.reveal.correct ? '✅ ถูกต้อง' : '❌ ยังไม่ถูก') + '</b><div class="text">' + rich(q.reveal.explanation) + '</div>' +
+      (q.reveal.hasExplImage ? '<img id="eimg" class="fig" alt="รูปประกอบคำอธิบาย">' : '') +
+      (q.reveal.takeaway ? '<p class="small"><b>หลักที่ควรจำ:</b> ' + rich(q.reveal.takeaway) + '</p>' : '') + '</div>';
+  }
+  var ctrl = '<div class="row" style="margin-top:12px">' +
+    '<button class="btn" data-act="prev"' + (S.cur === 0 ? ' disabled' : '') + '>← ก่อนหน้า</button>';
+  if (st.drill) {
+    if (!revealed) ctrl += '<button class="btn primary" data-act="confirm"' + (sel ? '' : ' disabled') + '>ยืนยันคำตอบ</button>';
+  } else {
+    ctrl += '<button class="btn" data-act="skip">ข้ามข้อนี้</button>' +
+      '<button class="btn' + (q.flagged ? ' primary' : '') + '" data-act="flag">🚩 ' + (q.flagged ? 'ปักธงแล้ว' : 'ปักธง') + '</button>';
+  }
+  ctrl += '<button class="btn" data-act="next"' + (S.cur >= st.questions.length - 1 ? ' disabled' : '') + '>ถัดไป →</button>' +
+    '<span class="grow"></span><button class="btn drawer-btn" data-act="drawer">แผงเลขข้อ</button></div>';
+  var panel = '<div class="card panel" id="panel"><h3>แผงเลขข้อ</h3><div class="grid">' + st.questions.map(function (x, i) {
+    var c = 'num' + (i === S.cur ? ' cur' : '') + (x.chosen || x.reveal ? ' done' : (x.skipped ? ' skip' : ''));
+    return '<button class="' + c + '" data-act="go" data-i="' + i + '">' + (i + 1) + (x.flagged ? '<span class="flag">🚩</span>' : '') + '</button>';
+  }).join('') + '</div><p class="small muted">ฟ้า = ตอบแล้ว · เหลือง = ข้าม · 🚩 = ปักธง</p>' +
+    '<button class="btn primary" style="width:100%" data-act="finish">' + (st.isLast ? 'ส่งข้อสอบ' : 'จบวิชานี้ → วิชาต่อไป') + '</button></div>';
+  $('top').innerHTML = top;
+  app(steps + '<div class="layout"><div><div class="card">' + body + '</div>' + ctrl + '</div>' + panel + '</div>');
+  $('top').innerHTML = top;
+  if (q.hasImage) loadImg('qimg', q.qid, 'q');
+  if (revealed && q.reveal.hasExplImage) loadImg('eimg', q.qid, 'e');
+  updateClock();
+}
+function loadImg(elId, qid, which) {
+  var key = qid + which, el = $(elId);
+  if (!el) return;
+  if (S.imgCache[key]) { el.src = S.imgCache[key]; return; }
+  rpc('api_getImage', S.state.sessionId, qid, which).then(function (r) {
+    S.imgCache[key] = r.src; var e2 = $(elId); if (e2) e2.src = r.src;
+  }).catch(function () { var e2 = $(elId); if (e2) e2.alt = 'โหลดรูปไม่สำเร็จ'; });
+}
+
+// ---------- นาฬิกา ----------
+function updateClock() {
+  var st = S.state;
+  if (!st || st.phase !== 'exam') return;
+  var rem = Math.max(0, S.deadline - performance.now());
+  var el = $('clock');
+  if (el) {
+    el.textContent = mmss(rem);
+    el.className = 'clock' + (rem <= 60000 ? ' red' : (rem <= 300000 ? ' amber' : ''));
+  }
+  (st.warnMinutes || []).forEach(function (w) {
+    var key = st.currentIdx + '_' + w;
+    if (rem <= w * 60000 && rem > 0 && !S.warned[key] && st.subjects[st.currentIdx].minutes > w) {
+      // เตือนเฉพาะระดับที่ใกล้ที่สุดที่ถึงแล้ว (ไม่เตือน 5 นาทีซ้ำหากเข้ามาตอนเหลือ 1 นาที)
+      var smaller = (st.warnMinutes || []).filter(function (x) { return x < w && rem <= x * 60000; }).length;
+      S.warned[key] = true;
+      if (!smaller) banner('เหลือเวลา ' + w + ' นาที', w <= 1 ? 'red' : 'amber');
+    }
+  });
+  if (rem <= 0 && !S.expiring) { S.expiring = true; handleExpire(); }
+}
+setInterval(updateClock, 250);
+function syncClock() {
+  if (!S.state || S.state.phase !== 'exam' || S.expiring) return;
+  var idx = S.state.currentIdx;
+  rpc('api_ping', S.state.sessionId).then(function (p) {
+    if (S.expiring || !S.state || S.state.phase !== 'exam') return;
+    if (p.phase !== 'exam' || p.currentIdx !== idx) { S.expiring = true; handleExpire(); }
+    else setClock(p.remainingMs);
+  }).catch(function () {});
+}
+setInterval(syncClock, 30000);
+function banner(text, cls) {
+  var b = $('banner'); b.textContent = '⏰ ' + text; b.className = 'banner ' + cls;
+  clearTimeout(banner.t); banner.t = setTimeout(function () { b.className = 'banner hidden'; }, 6000);
+}
+function handleExpire() {
+  var prevIdx = S.state.currentIdx;
+  modal('<h2>หมดเวลา</h2><p>กำลังบันทึกและไปต่อ…</p>');
+  S.saveChain.then(function () { return poll(0); });
+  function poll(n) {
+    return rpc('api_getState', S.state.sessionId).then(function (st) {
+      if (st.phase === 'exam' && st.currentIdx === prevIdx && n < 15) return delay(1200).then(function () { return poll(n + 1); });
+      closeModal();
+      if (st.phase === 'done') { renderDone(st); toast('หมดเวลา ระบบส่งข้อสอบให้แล้ว', 5000); }
+      else { toast('หมดเวลาวิชา "' + S.state.subjects[prevIdx].label + '" ไปวิชาถัดไปแล้ว', 5000); startExamView(st); }
+    }).catch(function () { return delay(2000).then(function () { return poll(n + 1); }); });
+  }
+}
+
+// ---------- บันทึกอัตโนมัติ ----------
+function setSave(t, bad) { var e = $('save'); if (e) { e.textContent = t; e.style.color = bad ? 'var(--red)' : ''; } }
+function save(payload) {
+  S.unsaved++; setSave('กำลังบันทึก…');
+  var sid = S.state.sessionId;
+  S.saveChain = S.saveChain.then(function () { return attempt(sid, payload, 0); }).then(function () {
+    S.unsaved--; if (S.unsaved === 0) setSave('บันทึกแล้ว ✓');
+  });
+  return S.saveChain;
+}
+function attempt(sid, payload, tries) {
+  return rpc('api_saveAnswer', sid, payload).then(function (res) {
+    if (res.remainingMs != null && res.phase === 'exam' && res.currentIdx === S.state.currentIdx) setClock(res.remainingMs);
+    if (!res.ok) {
+      if (res.reason === 'late' || res.reason === 'closed') {
+        toast('คำตอบนี้ไม่ถูกบันทึก เพราะหมดเวลาหรือวิชานี้ปิดแล้ว', 5000);
+        if (!S.expiring) { S.expiring = true; handleExpire(); }
+      }
+      return res;
+    }
+    if (res.reveal && S.state.questions) {
+      var q = S.state.questions.filter(function (x) { return x.qid === payload.qid; })[0];
+      if (q) { q.reveal = res.reveal; q.chosen = payload.chosen || q.chosen; if (S.state.questions[S.cur] === q) renderExam(); }
+    }
+    return res;
+  }).catch(function () {
+    setSave('ยังไม่ได้บันทึก — กำลังลองใหม่…', true);
+    return delay(Math.min(5000, 1000 * (tries + 1))).then(function () { return attempt(sid, payload, tries + 1); });
+  });
+}
+
+// ---------- การกระทำของผู้ใช้ ----------
+function goTo(i) {
+  var st = S.state;
+  if (i < 0 || i >= st.questions.length || i === S.cur) return;
+  var old = st.questions[S.cur];
+  save({ qid: old.qid, delta_ms: takeDelta(), visit: true });
+  S.cur = i; S.selected = null; renderExam();
+}
+function choose(k) {
+  var st = S.state, q = st.questions[S.cur];
+  if (q.reveal) return;
+  if (st.drill) { S.selected = k; renderExam(); return; }
+  var newVal = q.chosen === k ? '' : k;
+  q.chosen = newVal; if (newVal) q.skipped = false;
+  renderExam();
+  save({ qid: q.qid, chosen: newVal, delta_ms: takeDelta() });
+}
+function confirmAnswer() {
+  var q = S.state.questions[S.cur], k = S.selected || q.chosen;
+  if (!k || q.reveal) return;
+  q.chosen = k; S.selected = null;
+  save({ qid: q.qid, chosen: k, confirm: true, delta_ms: takeDelta() });
+}
+function skipQ() {
+  var q = S.state.questions[S.cur];
+  q.skipped = true; q.chosen = '';
+  save({ qid: q.qid, skipped: true, delta_ms: takeDelta() });
+  if (S.cur < S.state.questions.length - 1) { S.cur++; S.selected = null; }
+  renderExam();
+}
+function flagQ() {
+  var q = S.state.questions[S.cur];
+  q.flagged = !q.flagged; renderExam();
+  save({ qid: q.qid, flagged: q.flagged });
+}
+function finishDialog() {
+  var st = S.state, qs = st.questions;
+  var ans = qs.filter(function (x) { return x.chosen; }).length, fl = qs.filter(function (x) { return x.flagged; }).length;
+  var next = !st.isLast;
+  modal('<h2>' + (next ? 'จบวิชานี้และไปวิชาต่อไป?' : 'ส่งข้อสอบ?') + '</h2>' +
+    '<p>ตอบแล้ว <b>' + ans + '</b> ข้อ · ยังไม่ได้ตอบ <b>' + (qs.length - ans) + '</b> ข้อ · ปักธง <b>' + fl + '</b> ข้อ</p>' +
+    '<p class="muted small">' + (next ? 'จบแล้วกลับมาแก้วิชานี้ไม่ได้ และเวลาวิชาถัดไปเริ่มนับทันที' : 'ส่งแล้วแก้ไขไม่ได้') + '</p>' +
+    '<div class="row"><button class="btn primary" data-act="finish-yes">' + (next ? 'ยืนยัน ไปวิชาต่อไป' : 'ยืนยันส่ง') + '</button><button class="btn" data-act="close">กลับไปทำต่อ</button></div>');
+}
+function finishNow() {
+  var old = S.state.questions[S.cur];
+  closeModal();
+  S.expiring = true;
+  $('app').innerHTML = '<div class="spinner">กำลังบันทึก…</div>';
+  save({ qid: old.qid, delta_ms: takeDelta() });
+  S.saveChain.then(function () { return rpc('api_next', S.state.sessionId); }).then(function (res) {
+    S.expiring = false;
+    if (res.phase === 'done') renderDone(res); else startExamView(res);
+  }).catch(fail);
+}
+
+// ---------- จบการสอบ ----------
+function renderDone(info) {
+  S.state = info;
+  $('top').innerHTML = '';
+  var h = '<h1>' + esc(info.title) + '</h1>';
+  if (info.reason === 'time_up') h += '<p class="badge b-yellow">หมดเวลา ระบบส่งข้อสอบให้อัตโนมัติ</p>';
+  if (info.canReview && info.summary) {
+    var s = info.summary;
+    h += '<div class="card"><div class="row"><div><div class="muted">คะแนนรวม</div><div class="big">' + s.score_pct + '%</div></div>' +
+      '<div class="row grow" style="gap:8px"><div class="stat"><b style="color:var(--green)">' + s.n_correct + '</b>ถูก</div><div class="stat"><b style="color:var(--red)">' + s.n_wrong +
+      '</b>ผิด</div><div class="stat"><b>' + s.n_skipped + '</b>ข้าม</div><div class="stat"><b style="font-size:1.05rem;line-height:2.2">' + dur(s.used_sec) + '</b>เวลาที่ใช้</div></div></div></div>';
+    if (info.bySubject && info.bySubject.length > 1) {
+      h += '<div class="card"><h3>แยกรายวิชา</h3>' + info.bySubject.map(function (b) { return '<div>' + esc(b.label) + ': <b>' + b.pct + '%</b> (' + b.n_correct + '/' + b.n_total + ')</div>'; }).join('') + '</div>';
+    }
+    h += '<button class="btn primary" data-act="review">ดูเฉลยและทบทวน</button>';
+  } else {
+    h += '<div class="card"><h2>ส่งข้อสอบเรียบร้อย ✅</h2><p>ผู้ปกครองจะเปิดเฉลยและคะแนนให้ภายหลัง</p><button class="btn" data-act="recheck">ตรวจว่าเปิดเฉลยแล้วหรือยัง</button></div>';
+  }
+  app(h);
+}
+
+// ---------- ทบทวน ----------
+var R = { filter: 'all', subject: 'all' };
+function openReview() {
+  $('app').innerHTML = '<div class="spinner">กำลังโหลดเฉลย…</div>';
+  rpc('api_getReview', S.state.sessionId).then(function (d) {
+    if (!d.ok) { toast('ยังดูเฉลยไม่ได้'); return; }
+    S.reviewData = d; R.filter = 'all'; R.subject = 'all'; renderReview();
+  }).catch(fail);
+}
+function renderReview() {
+  var d = S.reviewData, items = d.items;
+  var subjects = []; items.forEach(function (i) { if (subjects.indexOf(i.subject) < 0) subjects.push(i.subject); });
+  var list = items.filter(function (i) {
+    if (R.subject !== 'all' && i.subject !== R.subject) return false;
+    if (R.filter === 'wrong') return i.isCorrect === false;
+    if (R.filter === 'flagged') return i.flagged;
+    if (R.filter === 'skipped') return i.skipped;
+    return true;
+  });
+  var fb = function (v, t) { return '<button class="btn' + (R.filter === v ? ' primary' : '') + '" data-act="rfilter" data-v="' + v + '">' + t + '</button>'; };
+  var h = '<div class="row"><button class="btn" data-act="backdone">← กลับ</button><h2 class="grow" style="margin:0">ทบทวนเฉลย</h2></div>' +
+    '<div class="row" style="margin:12px 0">' + fb('all', 'ทั้งหมด (' + items.length + ')') +
+    fb('wrong', 'เฉพาะข้อที่ผิด (' + items.filter(function (i) { return i.isCorrect === false; }).length + ')') +
+    fb('skipped', 'ข้ามหรือไม่ได้ตอบ (' + items.filter(function (i) { return i.skipped; }).length + ')') +
+    fb('flagged', '🚩 ปักธง (' + items.filter(function (i) { return i.flagged; }).length + ')') +
+    (subjects.length > 1 ? '<select data-act="rsubject"><option value="all">ทุกวิชา</option>' + subjects.map(function (s) {
+      var lab = items.filter(function (i) { return i.subject === s; })[0].subjectLabel; return '<option value="' + s + '"' + (R.subject === s ? ' selected' : '') + '>' + esc(lab) + '</option>'; }).join('') + '</select>' : '') + '</div>';
+  if (!list.length) h += '<div class="card muted">ไม่มีข้อที่ตรงกับตัวกรอง</div>';
+  list.forEach(function (it, n) {
+    var lt = letters(it.subject);
+    var res = it.isCorrect === true ? '<span class="badge b-green">ถูก</span>' : (it.isCorrect === false ? '<span class="badge b-red">ผิด</span>' : '<span class="badge b-none">ไม่ได้ตอบ</span>');
+    h += '<div class="card"><div class="row"><b>ข้อ ' + it.pos + ' · ' + esc(it.subjectLabel) + '</b>' + res + '<span class="badge tag">' + esc(it.skill) + '</span>' +
+      (it.flagged ? '<span>🚩</span>' : '') + '<span class="small muted grow" style="text-align:right">ใช้เวลา ' + it.timeSec + ' วินาที</span></div>';
+    if (it.passage) h += '<div class="passage text" style="margin-top:8px">' + rich(it.passage) + '</div>';
+    h += '<div class="text" style="margin:8px 0">' + rich(it.stem) + '</div>';
+    if (it.hasImage) h += '<img class="fig" id="rimg' + it.qid + '" alt="รูปประกอบ">';
+    it.choices.forEach(function (c, i) {
+      var cls = 'choice'; if (c.k === it.answer) cls += ' ok'; else if (c.k === it.chosen) cls += ' bad';
+      h += '<div class="' + cls + '" style="cursor:default"><span class="lt">' + lt[i] + '</span><span class="grow text">' + rich(c.t) +
+        (c.k === it.chosen ? ' <b>← คำตอบของลูก</b>' : '') + (c.k === it.answer ? ' <b>✓ เฉลย</b>' : '') +
+        '<div class="why">' + rich(c.k === it.answer ? 'ทำไมข้อนี้ถูก: ' + it.explanation : 'ทำไมข้อนี้ผิด: ' + (c.why || '')) + '</div></span></div>';
+    });
+    if (it.hasExplImage) h += '<img class="fig" id="reimg' + it.qid + '" alt="รูปประกอบคำอธิบาย">';
+    h += '<div class="expl"><b>หลักที่ควรจำ:</b> ' + rich(it.takeaway) + '</div>' +
+      '<div style="margin-top:8px"><button class="btn small" data-act="report" data-q="' + esc(it.qid) + '">แจ้งเฉลยผิด</button></div></div>';
+  });
+  app(h);
+  list.forEach(function (it) {
+    if (it.hasImage) loadImg('rimg' + it.qid, it.qid, 'q');
+    if (it.hasExplImage) loadImg('reimg' + it.qid, it.qid, 'e');
+  });
+}
+function reportDialog(qid) {
+  modal('<h3>แจ้งเฉลยผิด (' + esc(qid) + ')</h3><p class="small muted">บอกเหตุผลสั้นๆ ว่าทำไมคิดว่าเฉลยหรือโจทย์ผิด ผู้ปกครองจะตรวจให้</p>' +
+    '<textarea id="rsn" rows="4" style="width:100%" placeholder="เช่น ข้อ ข น่าจะถูกด้วย เพราะ…"></textarea>' +
+    '<div class="row" style="margin-top:10px"><button class="btn primary" data-act="report-send" data-q="' + esc(qid) + '">ส่ง</button><button class="btn" data-act="close">ยกเลิก</button></div>');
+}
+
+// ---------- จัดการคลิก ----------
+document.addEventListener('click', function (ev) {
+  var t = ev.target.closest('[data-act]');
+  if (!t || t.tagName === 'SELECT' || t.tagName === 'INPUT' && t.type !== 'checkbox') return;
+  var a = t.getAttribute('data-act');
+  if (t.disabled) return;
+  switch (a) {
+    case 'reload': boot(); break;
+    case 'mode': L.mode = t.getAttribute('data-v'); renderLobby(S.state); break;
+    case 'start': startNow(); break;
+    case 'skill': {
+      var v = t.value, i = L.skills.indexOf(v);
+      if (t.checked && i < 0) L.skills.push(v); else if (!t.checked && i >= 0) L.skills.splice(i, 1);
+      break;
+    }
+    case 'choose': choose(t.getAttribute('data-k')); break;
+    case 'confirm': confirmAnswer(); break;
+    case 'prev': goTo(S.cur - 1); break;
+    case 'next': goTo(S.cur + 1); break;
+    case 'go': goTo(Number(t.getAttribute('data-i'))); break;
+    case 'skip': skipQ(); break;
+    case 'flag': flagQ(); break;
+    case 'drawer': $('panel').classList.toggle('open'); break;
+    case 'finish': finishDialog(); break;
+    case 'finish-yes': finishNow(); break;
+    case 'close': closeModal(); break;
+    case 'review': openReview(); break;
+    case 'backdone': rpc('api_getState', S.state.sessionId).then(renderDone).catch(fail); break;
+    case 'recheck': rpc('api_getState', S.state.sessionId).then(function (i) { if (i.canReview) renderDone(i); else toast('ยังไม่ได้เปิดเฉลย'); }).catch(fail); break;
+    case 'rfilter': R.filter = t.getAttribute('data-v'); renderReview(); break;
+    case 'report': reportDialog(t.getAttribute('data-q')); break;
+    case 'report-send':
+      rpc('api_report', S.state.sessionId, t.getAttribute('data-q'), ($('rsn') || {}).value || '').then(function () { closeModal(); toast('ส่งแล้ว ขอบคุณ'); }).catch(fail);
+      break;
+  }
+});
+document.addEventListener('change', function (ev) {
+  var t = ev.target, a = t.getAttribute && t.getAttribute('data-act');
+  if (a === 'subject') { L.subject = t.value; L.skills = []; renderLobby(S.state); }
+  else if (a === 'count') L.count = Math.max(1, Number(t.value) || 10);
+  else if (a === 'minutes') L.minutes = Math.max(1, Number(t.value) || 10);
+  else if (a === 'rsubject') { R.subject = t.value; renderReview(); }
+});
+
+// ---------- สลับแท็บ ----------
+var lastTab = 0;
+function noteTab() {
+  if (!S.state || S.state.phase !== 'exam') return;
+  var t = Date.now(); if (t - lastTab < 1500) return; lastTab = t;
+  rpc('api_logTabSwitch', S.state.sessionId).catch(function () {});
+}
+document.addEventListener('visibilitychange', function () { if (document.hidden) noteTab(); });
+window.addEventListener('blur', function () { setTimeout(function () { if (document.hidden) noteTab(); }, 50); });
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) syncClock();
+});
+boot();
+</script>
+</body>
+</html>
