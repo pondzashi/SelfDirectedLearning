@@ -146,7 +146,7 @@ function sendWeeklySummary() {
   h += '<h3>ขั้นปัจจุบัน</h3><ul>' + SKILLS.map(function (sk) { var s = stepOf(sk, L[sk]); return '<li>' + esc(SKILL_NAMES[sk]) + ': ขั้น ' + s.no + ' — ' + esc(s.name) + (L.fails[sk] >= cfg.MAX_REPEATS ? ' <b style="color:#c5221f;">(ติดอยู่ ' + L.fails[sk] + ' ครั้ง)</b>' : '') + '</li>'; }).join('') + '</ul>';
   if (!st.placementDone) h += '<p>ยังอยู่ระหว่างแบบวัดระดับ (ทำแล้ว ' + st.placementDays.length + '/' + PLACEMENT_DAYS + ' วัน)</p>';
   if (errList.length) h += '<h3>ข้อผิดพลาดที่พบบ่อย</h3><ul>' + errList.map(function (e) { return '<li>' + esc(e) + ' × ' + err[e] + '</li>'; }).join('') + '</ul>';
-  h += '<p style="color:#5f6368;font-size:13px;">รอทบทวน ' + countPendingReviews() + ' รายการ</p></div>';
+  h += '<p style="color:#5f6368;font-size:13px;">รอทบทวน ' + countPendingReviews() + ' รายการ</p>' + dashLinkHtml() + '</div>';
   sendMail('[ฝึกคณิต] สรุปสัปดาห์ ' + childLabel() + ' ' + from + ' ถึง ' + today, h);
 }
 
@@ -184,6 +184,6 @@ function sendMonthlyReport() {
     if (model.periods[np - 1].label === 'วัดระดับ') h += '<p>เดือนนี้ยังไม่มีแบบวัดผลประจำเดือน (จะจัดวันศุกร์สุดท้ายของเดือน)</p>';
   } else h += '<p>ยังไม่มีข้อมูลวัดผล</p>';
   if (low.length) h += '<div style="margin-top:14px;padding:10px;border-radius:8px;background:#fef7e0;"><b>⚠ คลังข้อสอบกำลังจะหมด</b><ul>' + low.map(function (l) { return '<li>หมวด "' + esc(l.cat) + '": เหลือข้อที่ยังไม่ได้ใช้ใน ' + cfg.BANK_RECENT_DAYS + ' วัน เพียง ' + l.fresh + ' จาก ' + l.total + ' ข้อ — เพิ่มข้อในแท็บ "คลังข้อสอบ" ได้เลย</li>'; }).join('') + '</ul></div>';
-  h += '</div>';
+  h += dashLinkHtml() + '</div>';
   sendMail('[ฝึกคณิต] รายงานประจำเดือน ' + childLabel() + ' ' + mon, h);
 }

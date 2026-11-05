@@ -53,7 +53,7 @@ const book = { sheets: [], getId: () => 'SS1', setSpreadsheetTimeZone() {}, getS
   getSheets() { return this.sheets; }, setActiveSheet(s) { this.active = s; }, moveActiveSheet(i) { const k = this.sheets.indexOf(this.active); this.sheets.splice(k, 1); this.sheets.splice(i - 1, 0, this.active); },
   deleteSheet(s) { this.sheets = this.sheets.filter(x => x !== s); } };
 book.insertSheet('ชีต1');
-const propStore = {};
+const propStore = {}, cacheStore = {};
 const mails = [], triggers = [], logs = [];
 const gas = {
   SpreadsheetApp: { getActiveSpreadsheet: () => book, openById: () => book, BorderStyle: { SOLID: 'SOLID' }, getUi: () => chain() },
@@ -63,13 +63,14 @@ const gas = {
   Session: { getScriptTimeZone: () => 'Asia/Bangkok', getEffectiveUser: () => ({ getEmail: () => 'dad@example.com' }) },
   MailApp: { sendEmail: o => mails.push(o) },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
-  ScriptApp: { WeekDay: { SUNDAY: 'SUN' }, getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); },
+  CacheService: { getScriptCache: () => ({ get: k => (k in cacheStore ? cacheStore[k] : null), put: (k, v) => { cacheStore[k] = String(v); }, remove: k => { delete cacheStore[k]; } }) },
+  ScriptApp: { getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }), WeekDay: { SUNDAY: 'SUN' }, getProjectTriggers: () => triggers.slice(), deleteTrigger: t => { triggers.splice(triggers.indexOf(t), 1); },
     newTrigger: fn => { const t = { getHandlerFunction: () => fn, fn }; const b = { timeBased: () => b, onWeekDay: d => { t.day = d; return b; }, atHour: h => { t.hour = h; return b; }, everyDays: n => { t.every = n; return b; }, create: () => { triggers.push(t); return t; } }; return b; } },
   Logger: { log: m => logs.push(m) },
   HtmlService: { createTemplateFromFile: () => ({ evaluate: () => chain() }), XFrameOptionsMode: { ALLOWALL: 1 } }
 };
 const ctx = vm.createContext(Object.assign({ console, Math, Date, JSON, Object, Array, String, Number, RegExp, Error, Promise }, gas));
-const FILES = ['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'SetBuilder.gs', 'SelfTest.gs', 'Store.gs', 'Session.gs', 'Reports.gs', 'Code.gs'];
+const FILES = ['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'SetBuilder.gs', 'SelfTest.gs', 'DashLogic.gs', 'Store.gs', 'Session.gs', 'Reports.gs', 'Dashboard.gs', 'Code.gs'];
 for (const f of FILES) vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), ctx, { filename: f });
 const G = n => vm.runInContext(n, ctx);
 
@@ -223,6 +224,37 @@ const irows = itemSheet.getRange(2, 1, itemSheet.getLastRow() - 1, 17).getValues
 const fixSeen = {}; let fixRepeat = 0;
 irows.filter(r => /^FIX:/.test(r[4]) && !r[12]).forEach(r => { if (fixSeen[r[4]]) fixRepeat++; fixSeen[r[4]] = 1; });
 ok(fixRepeat === 0, 'ข้อจากคลังไม่ซ้ำในช่วงทดสอบ (ซ้ำ ' + fixRepeat + ')');
+// ---------- Dashboard ผู้ปกครอง ----------
+CLOCK.today = '2026-12-06';
+ok(G('dash_check')('1234').reason === 'nopin', 'Dashboard: ยังไม่ตั้ง PIN = เข้าไม่ได้');
+let threw = false; try { G('dash_getBundle')(''); } catch (e) { threw = /ไม่มีสิทธิ์/.test(e.message); }
+ok(threw, 'Dashboard: ไม่มี PIN แล้วเรียกข้อมูลไม่ได้');
+G('setSetting')('PARENT_PIN', '4321');
+ok(G('dash_check')('').reason === 'need', 'Dashboard: ยังไม่กรอก PIN ไม่นับเป็นความผิด');
+const w1 = G('dash_check')('0000');
+ok(w1.reason === 'wrong' && w1.left === 4, 'Dashboard: PIN ผิด เหลือ 4 ครั้ง');
+for (let i = 0; i < 4; i++) G('dash_check')('1111');
+ok(G('dash_check')('4321').reason === 'locked', 'Dashboard: ผิดครบ 5 ครั้งแล้วล็อก (แม้ใส่ถูก)');
+threw = false; try { G('dash_getBundle')('4321'); } catch (e) { threw = true; }
+ok(threw, 'Dashboard: ระหว่างล็อกเรียกข้อมูลไม่ได้');
+for (const k of Object.keys(cacheStore)) delete cacheStore[k]; // จำลองครบ 10 นาที
+ok(G('dash_check')('4321').ok === true, 'Dashboard: PIN ถูกเข้าได้');
+const bun = G('dash_getBundle')('4321');
+ok(bun.kpi.sessions === sessions.length && bun.series.dates.length === sessions.length, 'Dashboard: จำนวนครั้งที่ทำตรงกับข้อมูลจริง (' + bun.kpi.sessions + ')');
+ok(bun.skills.length === 4 && bun.calendar.length === 42 && bun.radar.length === 7 && bun.report.periods.length === 2, 'Dashboard: ทักษะ 4 / ปฏิทิน 42 วัน / เรดาร์ 7 หมวด / ช่วงวัดผล 2');
+ok(bun.errors30.total > 0 && bun.errors30.types.length > 0 && Array.isArray(bun.alerts) && bun.alerts.length > 0, 'Dashboard: มีสถิติข้อผิดพลาดและข้อควรสนใจ');
+ok(bun.history.length > 0 && bun.history[0].date >= bun.history[bun.history.length - 1].date && bun.history.length <= 60, 'Dashboard: ประวัติเรียงล่าสุดก่อน');
+ok(bun.placement.done === true && bun.thresholds.green === 85 && bun.thresholds.yellow === 60 && bun.child === 'น้องต้น', 'Dashboard: ค่าเกณฑ์ ชื่อ และสถานะวัดระดับ');
+ok(bun.bank.length >= 4 && bun.reviews.pending >= 0 && typeof bun.kpi.streak === 'number', 'Dashboard: คลังข้อสอบ/ทบทวน/streak');
+ok(JSON.stringify(bun).length < 300000, 'Dashboard: ก้อนข้อมูลไม่ใหญ่เกินไป (' + JSON.stringify(bun).length + ' ตัวอักษร)');
+const ses = G('dash_getSession')('4321', '2026-11-07');
+ok(ses.total > 0 && Array.isArray(ses.wrong) && ses.wrong.every(w => w.label && w.section), 'Dashboard: รายละเอียดรายวัน');
+threw = false; try { G('dash_getSession')('9999', '2026-11-07'); } catch (e) { threw = true; }
+ok(threw, 'Dashboard: PIN ผิดเรียกรายละเอียดไม่ได้');
+ok(G('dashboardUrl')() === 'https://script.google.com/macros/s/TEST/exec?page=dashboard', 'Dashboard: สร้างลิงก์ถูก');
+ok(monthly && /page=dashboard/.test(monthly.htmlBody) && mails.some(m => /สรุปประจำสัปดาห์/.test(m.htmlBody) && /page=dashboard/.test(m.htmlBody)), 'อีเมลรายสัปดาห์/รายเดือนมีลิงก์ Dashboard');
+ok(!mails.some(m => /สรุปประจำสัปดาห์|รายงานประจำเดือน/.test(m.htmlBody) === false && /page=dashboard/.test(m.htmlBody)), 'อีเมลสรุปรายวันไม่ใส่ลิงก์ Dashboard');
+if (process.env.DASH_OUT) require('fs').writeFileSync(process.env.DASH_OUT, JSON.stringify(bun));
 // เตือนคลังข้อสอบใกล้หมด
 G('setSetting')('LOW_BANK_THRESHOLD', 999);
 CLOCK.today = '2026-12-31'; mails.length = 0; G('dailyJob')();

@@ -18,6 +18,9 @@ var DEFAULT_SETTINGS = [
   ['PLACEMENT_BACKOFF', 1, 'หลังวัดระดับ ถอยกลับกี่ขั้นเพื่อเริ่มจากระดับที่คล่อง'],
   ['DELTA_THRESHOLD', 3, 'เปลี่ยนแปลงไม่เกินกี่ % ถือว่า "เท่าเดิม" (สีเทา) ในรายงานรายเดือน'],
   ['TARGET_MULTIPLIER', 1, 'ปรับเวลาเป้าหมายของส่วน A ในชุดประจำวัน: 1 = ตามที่ตั้งไว้, 1.2 = ให้เวลามากขึ้น 20%, 0.9 = เข้มขึ้น 10% (ไม่มีผลกับแบบวัดระดับ/แบบวัดผล)'],
+  ['PARENT_PIN', '', 'รหัสเข้า Dashboard ผู้ปกครอง (ตัวเลขหรือตัวอักษรก็ได้ ตั้งเอง) — ถ้าเว้นว่าง Dashboard จะเข้าไม่ได้ ลิงก์: ลิงก์เว็บแอป + ?page=dashboard'],
+  ['DASH_GREEN', 85, 'Dashboard: ตั้งแต่กี่ % ถือว่า 🟢 ดี'],
+  ['DASH_YELLOW', 60, 'Dashboard: ตั้งแต่กี่ % ถือว่า 🟡 พอใช้ (ต่ำกว่านี้ = 🔴)'],
   ['A_MAX_SEC', 1200, 'เวลาสูงสุดของรอบแรกส่วน A (วินาที) เกินแล้วระบบจะปิดรอบแรกอัตโนมัติ'],
   ['LOW_BANK_THRESHOLD', 8, 'คลังข้อสอบหมวดไหนมีข้อที่ยังไม่ได้ใช้ใน 45 วันเหลือน้อยกว่านี้ จะเตือนทางอีเมลรายเดือน'],
   ['BANK_RECENT_DAYS', 45, 'ข้อในคลังที่เคยออกไปแล้ว จะไม่ออกซ้ำภายในกี่วัน']
@@ -52,8 +55,11 @@ function getSettings() {
     });
   }
   cfg.START_DATE = cellToYmd(cfg.START_DATE);
-  ['TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
+  ['DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
   if (!(cfg.TARGET_MULTIPLIER > 0)) cfg.TARGET_MULTIPLIER = 1;
+  if (!(cfg.DASH_GREEN > 0)) cfg.DASH_GREEN = 85;
+  if (!(cfg.DASH_YELLOW > 0)) cfg.DASH_YELLOW = 60;
+  cfg.PARENT_PIN = cfg.PARENT_PIN == null ? '' : String(cfg.PARENT_PIN);
   cfg.practiceDays = String(cfg.PRACTICE_DAYS).split(/[,\s]+/).filter(function (x) { return x !== ''; }).map(Number);
   _cfg = cfg;
   return cfg;

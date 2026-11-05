@@ -10,6 +10,13 @@
 var SHEET_ID = '';
 
 function doGet(e) {
+  // ?page=dashboard = หน้า Dashboard ผู้ปกครอง (ล็อกด้วย PIN) / ไม่ระบุ = หน้าฝึกของลูก (ลิงก์เดิมใช้ต่อได้)
+  if (e && e.parameter && e.parameter.page === 'dashboard') {
+    return HtmlService.createTemplateFromFile('Dashboard').evaluate()
+      .setTitle('Dashboard · ฝึกคณิต ป.4')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
   var t = HtmlService.createTemplateFromFile('Index');
   return t.evaluate()
     .setTitle('ฝึกคณิต ป.4')

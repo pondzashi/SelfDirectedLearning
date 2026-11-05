@@ -1621,6 +1621,165 @@ function selfTestAll(ok) {
   ok(bm.sections[0].targetSec > 0, 'แบบวัดผลมีเวลาอ้างอิง');
 }
 
+// ======================= DashLogic.gs =======================
+/**
+ * DashLogic.gs — คำนวณข้อมูลสำหรับ Dashboard ผู้ปกครอง (ไม่เรียก API ของ Google ทดสอบด้วย Node ได้)
+ * รับแถวดิบจากชีต (ผลรายวัน / ผลรายข้อ / ความก้าวหน้า) แล้วคืนข้อมูลพร้อมแสดงผล
+ */
+
+function dashRound1(x) { return Math.round(x * 10) / 10; }
+function dashPct(right, total) { return Number(total) > 0 ? dashRound1(Number(right) / Number(total) * 100) : null; }
+/** สีตามเกณฑ์: green / yellow / red / none */
+function dashColor(pct, green, yellow) {
+  if (pct == null || pct === '') return 'none';
+  return pct >= green ? 'green' : pct >= yellow ? 'yellow' : 'red';
+}
+
+/** แถวชีต "ผลรายวัน" → รายการที่ใช้ง่าย (เรียงตามวันที่) */
+function dashDailyList(rows) {
+  function sec(r, o) {
+    return { right: Number(r[o]) || 0, total: Number(r[o + 1]) || 0, firstSec: Number(r[o + 2]) || 0, totalSec: Number(r[o + 3]) || 0,
+      target: Number(r[o + 4]) || 0, rounds: Number(r[o + 5]) || 0, errors: String(r[o + 6] || '') };
+  }
+  return rows.filter(function (r) { return r[0]; }).map(function (r) {
+    var A = sec(r, 4), B = sec(r, 12), C = sec(r, 19), daily = r[1] === 'ประจำวัน';
+    return { date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
+      totalMin: Number(r[26]) || 0, note: String(r[27] || ''), aPct: dashPct(A.right, A.total), bPct: dashPct(B.right, B.total), cPct: dashPct(C.right, C.total),
+      ratio: daily && A.target ? dashRound1(A.totalSec / A.target * 100) : null };
+  }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+}
+
+/** จำนวนวันที่ทำติดต่อกัน นับเฉพาะวันที่ตั้งไว้ว่าฝึก (วันพักข้ามได้) ถ้าวันนี้ยังไม่ทำ ไม่ถือว่าขาด */
+function dashStreak(doneSet, today, practiceDays) {
+  var d = doneSet[today] ? today : ymdAdd(today, -1), n = 0;
+  for (var i = 0; i < 400; i++) {
+    if (practiceDays.indexOf(ymdDow(d)) < 0 && !doneSet[d]) { d = ymdAdd(d, -1); continue; }
+    if (doneSet[d]) { n++; d = ymdAdd(d, -1); } else break;
+  }
+  return n;
+}
+
+/** จำนวนวันฝึกที่พลาดติดกัน นับย้อนจากเมื่อวาน (ไม่เกินวันเริ่ม) */
+function dashMissed(doneSet, startDate, today, practiceDays) {
+  var d = ymdAdd(today, -1), n = 0;
+  while (startDate && d >= startDate) {
+    if (practiceDays.indexOf(ymdDow(d)) >= 0) { if (doneSet[d]) break; n++; }
+    d = ymdAdd(d, -1);
+  }
+  return n;
+}
+
+/**
+ * ปฏิทิน weeks สัปดาห์ (อาทิตย์–เสาร์) จบที่สัปดาห์ของวันนี้
+ * status: pass / fail / done / miss / rest / today / future / before
+ */
+function dashCalendar(passMap, today, startDate, practiceDays, weeks) {
+  weeks = weeks || 6;
+  var end = ymdAdd(today, 6 - ymdDow(today)), begin = ymdAdd(end, -(weeks * 7 - 1)), out = [];
+  for (var i = 0; i < weeks * 7; i++) {
+    var d = ymdAdd(begin, i), p = passMap[d], st;
+    if (p !== undefined) st = p === 'ผ่าน' ? 'pass' : p === 'ไม่ผ่าน' ? 'fail' : 'done';
+    else if (d > today) st = 'future';
+    else if (startDate && d < startDate) st = 'before';
+    else if (d === today) st = 'today';
+    else if (practiceDays.indexOf(ymdDow(d)) < 0) st = 'rest';
+    else st = 'miss';
+    out.push({ date: d, dow: ymdDow(d), status: st });
+  }
+  return out;
+}
+
+/** ชื่อที่อ่านเข้าใจของคีย์ข้อ (GEN:AS03 / TPL:W01 / FIX:F012) */
+function dashTagLabel(key) {
+  var p = String(key).split(':'), kind = p[0], id = p[1];
+  if (kind === 'GEN' && typeof STEP_BY_ID !== 'undefined' && STEP_BY_ID[id]) { var s = STEP_BY_ID[id]; return SKILL_NAMES[s.skill] + ' ขั้น ' + s.no + ' · ' + s.name; }
+  if (kind === 'TPL' && typeof TPL_BY_ID !== 'undefined' && TPL_BY_ID[id]) return CAT_NAMES[TPL_BY_ID[id].cat] + ' · แบบ ' + id;
+  if (kind === 'FIX') return 'ข้อจากคลังข้อสอบ ' + id;
+  return String(key);
+}
+
+/** สถิติข้อผิดพลาดจากแถว "ผลรายข้อ" ตั้งแต่วันที่ fromYmd (เฉพาะข้อที่ผิดรอบแรก) */
+function dashErrorStats(itemRows, fromYmd) {
+  var types = {}, cats = {}, tags = {}, wrongTotal = 0, total = 0;
+  itemRows.forEach(function (r) {
+    if (String(r[0]) < fromYmd) return;
+    var cat = String(r[3]), key = String(r[4]), ok = Number(r[7]) === 1;
+    total++;
+    var c = cats[cat] = cats[cat] || { cat: cat, total: 0, wrong: 0 }; c.total++;
+    var t = tags[key] = tags[key] || { key: key, total: 0, wrong: 0, sample: '' }; t.total++;
+    if (!ok) {
+      wrongTotal++; c.wrong++; t.wrong++; if (!t.sample) t.sample = String(r[16] || '');
+      var e = String(r[11] || 'ตอบผิด'); types[e] = (types[e] || 0) + 1;
+    }
+  });
+  var typeList = Object.keys(types).map(function (k) { return { type: k, n: types[k] }; }).sort(function (a, b) { return b.n - a.n; });
+  var catList = Object.keys(cats).map(function (k) { var c = cats[k]; return { cat: c.cat, name: CAT_NAMES[c.cat] || c.cat, total: c.total, wrong: c.wrong, pctWrong: dashPct(c.wrong, c.total) }; })
+    .sort(function (a, b) { return (b.pctWrong || 0) - (a.pctWrong || 0); });
+  var tagList = Object.keys(tags).map(function (k) { return tags[k]; }).filter(function (t) { return t.wrong >= 2 && t.total >= 3; })
+    .sort(function (a, b) { return (b.wrong / b.total) - (a.wrong / a.total) || b.wrong - a.wrong; }).slice(0, 8)
+    .map(function (t) { return { key: t.key, label: dashTagLabel(t.key), wrong: t.wrong, total: t.total, pctWrong: dashPct(t.wrong, t.total), sample: t.sample }; });
+  return { total: total, wrong: wrongTotal, types: typeList, cats: catList, tags: tagList };
+}
+
+/** ความคืบหน้าของแต่ละทักษะจากแท็บ "ระดับปัจจุบัน" */
+function dashSkillProgress(L) {
+  return SKILLS.map(function (sk) {
+    var n = skillSteps(sk).length, no = L[sk], st = stepOf(sk, no);
+    return { skill: sk, name: SKILL_NAMES[sk], step: no, total: n, stepName: st.name, fails: (L.fails && L.fails[sk]) || 0, pct: Math.round((no - 1) / n * 100) };
+  });
+}
+
+/** ชุดข้อมูลกราฟจากแท็บ "ความก้าวหน้า": [วันที่, A%, B%, C%, เวลา÷เป้า, ขั้น×4] */
+function dashSeries(progressRows) {
+  var s = { dates: [], a: [], b: [], c: [], ratio: [], steps: { addsub: [], mul: [], div: [], fracdec: [] } };
+  function num(v) { return v === '' || v == null ? null : Number(v); }
+  progressRows.filter(function (r) { return r[0]; }).forEach(function (r) {
+    s.dates.push(String(r[0])); s.a.push(num(r[1])); s.b.push(num(r[2])); s.c.push(num(r[3])); s.ratio.push(num(r[4]));
+    SKILLS.forEach(function (sk, i) { s.steps[sk].push(num(r[5 + i])); });
+  });
+  return s;
+}
+
+/** ข้อควรสนใจสำหรับผู้ปกครอง: [{level:'warn'|'info'|'good', text}] */
+function dashAlerts(x) {
+  var out = [], i;
+  if (!x.startDate) out.push({ level: 'warn', text: 'ยังไม่ได้ตั้งวันเริ่ม (START_DATE) ในแท็บตั้งค่า' });
+  else if (x.today < x.startDate) out.push({ level: 'info', text: 'ยังไม่ถึงวันเริ่ม (' + x.startDate + ')' });
+  if (x.placement && !x.placement.done && x.startDate && x.today >= x.startDate) out.push({ level: 'info', text: 'อยู่ระหว่างแบบวัดระดับ ทำแล้ว ' + x.placement.days + ' จาก ' + x.placement.of + ' วัน' });
+  SKILLS.forEach(function (sk) {
+    var f = (x.fails && x.fails[sk]) || 0;
+    if (f >= x.maxRepeats) out.push({ level: 'warn', text: 'ติดขั้นเดิมของ' + SKILL_NAMES[sk] + ' (ขั้น ' + x.levels[sk] + ') มา ' + f + ' ครั้งติดกัน ควรนั่งดูวิธีคิดกับลูก' });
+  });
+  if (x.missed >= 2) out.push({ level: 'warn', text: 'ไม่ได้ฝึกมา ' + x.missed + ' วันฝึกติดต่อกัน' });
+  var recent = (x.list || []).filter(function (d) { return d.mode === 'ประจำวัน'; }).slice(-3);
+  if (recent.length === 3) {
+    var avgA = recent.reduce(function (s, d) { return s + (d.aPct || 0); }, 0) / 3;
+    var slow = recent.every(function (d) { return d.ratio != null && d.ratio > 150; });
+    if (avgA < x.yellow) out.push({ level: 'warn', text: 'ความแม่นยำส่วน A 3 ครั้งล่าสุดเฉลี่ย ' + dashRound1(avgA) + '% (ต่ำกว่าเกณฑ์ ' + x.yellow + '%)' });
+    if (slow) out.push({ level: 'warn', text: 'ส่วน A ใช้เวลาเกิน 150% ของเป้าหมายติดกัน 3 ครั้ง ลองปรับ TARGET_MULTIPLIER หรือให้ลูกฝึกขั้นก่อนหน้า' });
+  }
+  if ((x.dueReviews || 0) >= 8) out.push({ level: 'info', text: 'มีข้อทบทวนครบกำหนด ' + x.dueReviews + ' ข้อ (ระบบทยอยใส่ในชุดวันละไม่เกิน 8 ข้อ)' });
+  (x.lowBank || []).forEach(function (b) { out.push({ level: 'warn', text: 'คลังข้อสอบหมวด "' + b.cat + '" เหลือข้อสด ' + b.fresh + ' ข้อ ควรเพิ่มข้อใหม่' }); });
+  if (x.streak >= 5) out.push({ level: 'good', text: 'ทำติดต่อกัน ' + x.streak + ' วันแล้ว เยี่ยมมาก!' });
+  if (x.todayDone) out.push({ level: 'good', text: 'วันนี้ลูกทำเสร็จแล้ว' + (x.todayPass === 'ผ่าน' ? ' และผ่านขั้นของส่วน A' : '') });
+  return out;
+}
+
+/** ข้อมูลเรดาร์: ผลวัดระดับเทียบล่าสุด (จาก computeReportModel) */
+function dashRadar(model) {
+  var last = model.periods.length - 1;
+  return model.cats.map(function (c) { return { cat: c.cat, name: c.name, base: c.pcts[0] == null ? null : c.pcts[0], cur: last >= 0 && c.pcts[last] != null ? c.pcts[last] : null }; });
+}
+
+/** สรุปรายเดือนปัจจุบัน */
+function dashMonthStats(list, month) {
+  var m = list.filter(function (d) { return d.date.slice(0, 7) === month; });
+  var daily = m.filter(function (d) { return d.mode === 'ประจำวัน'; });
+  var passN = daily.filter(function (d) { return d.pass === 'ผ่าน'; }).length;
+  var avgA = daily.length ? dashRound1(daily.reduce(function (s, d) { return s + (d.aPct || 0); }, 0) / daily.length) : null;
+  return { days: m.length, dailyCount: daily.length, passN: passN, avgA: avgA };
+}
+
 // ======================= Store.gs =======================
 /**
  * Store.gs — อ่าน/เขียน Google Sheet, ตั้งค่า, สถานะระบบ
@@ -1642,6 +1801,9 @@ var DEFAULT_SETTINGS = [
   ['PLACEMENT_BACKOFF', 1, 'หลังวัดระดับ ถอยกลับกี่ขั้นเพื่อเริ่มจากระดับที่คล่อง'],
   ['DELTA_THRESHOLD', 3, 'เปลี่ยนแปลงไม่เกินกี่ % ถือว่า "เท่าเดิม" (สีเทา) ในรายงานรายเดือน'],
   ['TARGET_MULTIPLIER', 1, 'ปรับเวลาเป้าหมายของส่วน A ในชุดประจำวัน: 1 = ตามที่ตั้งไว้, 1.2 = ให้เวลามากขึ้น 20%, 0.9 = เข้มขึ้น 10% (ไม่มีผลกับแบบวัดระดับ/แบบวัดผล)'],
+  ['PARENT_PIN', '', 'รหัสเข้า Dashboard ผู้ปกครอง (ตัวเลขหรือตัวอักษรก็ได้ ตั้งเอง) — ถ้าเว้นว่าง Dashboard จะเข้าไม่ได้ ลิงก์: ลิงก์เว็บแอป + ?page=dashboard'],
+  ['DASH_GREEN', 85, 'Dashboard: ตั้งแต่กี่ % ถือว่า 🟢 ดี'],
+  ['DASH_YELLOW', 60, 'Dashboard: ตั้งแต่กี่ % ถือว่า 🟡 พอใช้ (ต่ำกว่านี้ = 🔴)'],
   ['A_MAX_SEC', 1200, 'เวลาสูงสุดของรอบแรกส่วน A (วินาที) เกินแล้วระบบจะปิดรอบแรกอัตโนมัติ'],
   ['LOW_BANK_THRESHOLD', 8, 'คลังข้อสอบหมวดไหนมีข้อที่ยังไม่ได้ใช้ใน 45 วันเหลือน้อยกว่านี้ จะเตือนทางอีเมลรายเดือน'],
   ['BANK_RECENT_DAYS', 45, 'ข้อในคลังที่เคยออกไปแล้ว จะไม่ออกซ้ำภายในกี่วัน']
@@ -1676,8 +1838,11 @@ function getSettings() {
     });
   }
   cfg.START_DATE = cellToYmd(cfg.START_DATE);
-  ['TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
+  ['DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
   if (!(cfg.TARGET_MULTIPLIER > 0)) cfg.TARGET_MULTIPLIER = 1;
+  if (!(cfg.DASH_GREEN > 0)) cfg.DASH_GREEN = 85;
+  if (!(cfg.DASH_YELLOW > 0)) cfg.DASH_YELLOW = 60;
+  cfg.PARENT_PIN = cfg.PARENT_PIN == null ? '' : String(cfg.PARENT_PIN);
   cfg.practiceDays = String(cfg.PRACTICE_DAYS).split(/[,\s]+/).filter(function (x) { return x !== ''; }).map(Number);
   _cfg = cfg;
   return cfg;
@@ -2293,7 +2458,7 @@ function sendWeeklySummary() {
   h += '<h3>ขั้นปัจจุบัน</h3><ul>' + SKILLS.map(function (sk) { var s = stepOf(sk, L[sk]); return '<li>' + esc(SKILL_NAMES[sk]) + ': ขั้น ' + s.no + ' — ' + esc(s.name) + (L.fails[sk] >= cfg.MAX_REPEATS ? ' <b style="color:#c5221f;">(ติดอยู่ ' + L.fails[sk] + ' ครั้ง)</b>' : '') + '</li>'; }).join('') + '</ul>';
   if (!st.placementDone) h += '<p>ยังอยู่ระหว่างแบบวัดระดับ (ทำแล้ว ' + st.placementDays.length + '/' + PLACEMENT_DAYS + ' วัน)</p>';
   if (errList.length) h += '<h3>ข้อผิดพลาดที่พบบ่อย</h3><ul>' + errList.map(function (e) { return '<li>' + esc(e) + ' × ' + err[e] + '</li>'; }).join('') + '</ul>';
-  h += '<p style="color:#5f6368;font-size:13px;">รอทบทวน ' + countPendingReviews() + ' รายการ</p></div>';
+  h += '<p style="color:#5f6368;font-size:13px;">รอทบทวน ' + countPendingReviews() + ' รายการ</p>' + dashLinkHtml() + '</div>';
   sendMail('[ฝึกคณิต] สรุปสัปดาห์ ' + childLabel() + ' ' + from + ' ถึง ' + today, h);
 }
 
@@ -2331,8 +2496,105 @@ function sendMonthlyReport() {
     if (model.periods[np - 1].label === 'วัดระดับ') h += '<p>เดือนนี้ยังไม่มีแบบวัดผลประจำเดือน (จะจัดวันศุกร์สุดท้ายของเดือน)</p>';
   } else h += '<p>ยังไม่มีข้อมูลวัดผล</p>';
   if (low.length) h += '<div style="margin-top:14px;padding:10px;border-radius:8px;background:#fef7e0;"><b>⚠ คลังข้อสอบกำลังจะหมด</b><ul>' + low.map(function (l) { return '<li>หมวด "' + esc(l.cat) + '": เหลือข้อที่ยังไม่ได้ใช้ใน ' + cfg.BANK_RECENT_DAYS + ' วัน เพียง ' + l.fresh + ' จาก ' + l.total + ' ข้อ — เพิ่มข้อในแท็บ "คลังข้อสอบ" ได้เลย</li>'; }).join('') + '</ul></div>';
-  h += '</div>';
+  h += dashLinkHtml() + '</div>';
   sendMail('[ฝึกคณิต] รายงานประจำเดือน ' + childLabel() + ' ' + mon, h);
+}
+
+// ======================= Dashboard.gs =======================
+/**
+ * Dashboard.gs — API ของหน้า Dashboard ผู้ปกครอง (?page=dashboard)
+ * เว็บแอปเปิดแบบ "Anyone" จึงเช็กอีเมลผู้เปิดไม่ได้ ใช้รหัส PIN (PARENT_PIN ในแท็บตั้งค่า) แทน
+ * ใส่ผิดเกิน 5 ครั้งจะล็อก 10 นาที ถ้าไม่ได้ตั้ง PIN จะเข้าไม่ได้เลย (ปลอดภัยไว้ก่อน)
+ */
+var DASH_FAIL_KEY = 'dash_fail', DASH_MAX_FAILS = 5, DASH_LOCK_SEC = 600;
+
+function dash_auth_(pin) {
+  var want = String(getSettings().PARENT_PIN == null ? '' : getSettings().PARENT_PIN).trim();
+  if (!want) return { ok: false, reason: 'nopin' };
+  var given = String(pin == null ? '' : pin).trim();
+  if (!given) return { ok: false, reason: 'need' };
+  var cache = CacheService.getScriptCache(), fails = Number(cache.get(DASH_FAIL_KEY) || 0);
+  if (fails >= DASH_MAX_FAILS) return { ok: false, reason: 'locked' };
+  if (given === want) { cache.remove(DASH_FAIL_KEY); return { ok: true }; }
+  cache.put(DASH_FAIL_KEY, String(fails + 1), DASH_LOCK_SEC);
+  return { ok: false, reason: 'wrong', left: DASH_MAX_FAILS - fails - 1 };
+}
+function dash_need_(pin) { var r = dash_auth_(pin); if (!r.ok) throw new Error('ไม่มีสิทธิ์เข้าถึง'); }
+
+/** หน้าเว็บเรียกตอนเปิด เพื่อรู้ว่าต้องขอรหัสหรือไม่ */
+function dash_check(pin) { return dash_auth_(pin); }
+
+function readProgressRows_(maxRows) {
+  var sh = getSheet(SH.progress), last = sh.getLastRow();
+  if (last < 2) return [];
+  var start = Math.max(2, last - maxRows + 1);
+  return sh.getRange(start, 1, last - start + 1, PROGRESS_HEAD.length).getValues().map(function (r) { r[0] = cellToYmd(r[0]); return r; });
+}
+
+/** แพ็กข้อมูลทั้งหมดของ Dashboard เป็นก้อนเดียว */
+function dash_getBundle(pin) {
+  dash_need_(pin);
+  var cfg = getSettings(), st = getState(), L = readLevels(), today = todayYmd(), green = cfg.DASH_GREEN, yellow = cfg.DASH_YELLOW;
+  var list = dashDailyList(readDailyRows(400)), doneSet = {}, passMap = {};
+  list.forEach(function (d) { doneSet[d.date] = true; passMap[d.date] = d.pass; });
+  var from30 = ymdAdd(today, -30), from14 = ymdAdd(today, -14);
+  var items = readItemRows(6000);
+  var model = computeReportModel(readBench(), cfg.DELTA_THRESHOLD);
+  var streak = dashStreak(doneSet, today, cfg.practiceDays), missed = dashMissed(doneSet, cfg.START_DATE, today, cfg.practiceDays);
+  var due = getDueReviews(today), low = [];
+  try { low = lowBankReport(); } catch (e) { low = []; }
+  var todayRow = list.filter(function (d) { return d.date === today; })[0];
+  var alerts = dashAlerts({ startDate: cfg.START_DATE, today: today, placement: { done: st.placementDone, days: st.placementDays.length, of: PLACEMENT_DAYS },
+    fails: L.fails, levels: L, maxRepeats: cfg.MAX_REPEATS, missed: missed, list: list, yellow: yellow, dueReviews: due.length, lowBank: low,
+    streak: streak, todayDone: !!todayRow, todayPass: todayRow && todayRow.pass });
+  var history = list.slice().reverse().slice(0, 60).map(function (d) {
+    return { date: d.date, mode: d.mode, skillName: d.skillName, stepLabel: d.stepLabel, pass: d.pass, aPct: d.aPct, bPct: d.bPct, cPct: d.cPct, ratio: d.ratio,
+      A: d.A, B: d.B, C: d.C, totalMin: d.totalMin, note: d.note };
+  });
+  var bank = [];
+  try {
+    var hist = historyContext(today), by = {};
+    readBank().forEach(function (b) { var a = by[b.cat] = by[b.cat] || { cat: b.cat, fresh: 0, total: 0 }, u = hist.bankUsed[b.code]; a.total++; if (!u || ymdDiff(today, u) > cfg.BANK_RECENT_DAYS) a.fresh++; });
+    bank = Object.keys(by).map(function (k) { return by[k]; });
+  } catch (e) { bank = []; }
+  return {
+    title: 'ฝึกคณิต ป.4', child: childLabel(), today: today, startDate: cfg.START_DATE, practiceDays: cfg.practiceDays,
+    thresholds: { green: green, yellow: yellow }, deltaThreshold: cfg.DELTA_THRESHOLD,
+    placement: { done: st.placementDone, days: st.placementDays.length, of: PLACEMENT_DAYS }, tiers: L.tiers,
+    kpi: { streak: streak, missed: missed, sessions: list.length, month: dashMonthStats(list, ymdMonth(today)), pendingReviews: countPendingReviews(), dueReviews: due.length,
+      today: todayRow ? { pass: todayRow.pass, aPct: todayRow.aPct, bPct: todayRow.bPct, cPct: todayRow.cPct, mode: todayRow.mode } : null },
+    skills: dashSkillProgress(L), alerts: alerts,
+    calendar: dashCalendar(passMap, today, cfg.START_DATE, cfg.practiceDays, 6),
+    series: dashSeries(readProgressRows_(200)),
+    report: model, radar: dashRadar(model),
+    errors30: dashErrorStats(items, from30), errors14: dashErrorStats(items, from14),
+    history: history, reviews: { pending: countPendingReviews(), due: due.slice(0, 12).map(function (r) { return { key: r.key, label: dashTagLabel(r.key), cat: r.cat, due: r.due }; }) },
+    bank: bank, serverNow: new Date().getTime()
+  };
+}
+
+/** รายละเอียดของวันหนึ่ง: ข้อที่ผิดรอบแรกพร้อมโจทย์ */
+function dash_getSession(pin, date) {
+  dash_need_(pin);
+  date = String(date || '');
+  var rows = readItemRows(6000).filter(function (r) { return String(r[0]) === date; });
+  var secName = { A: 'คิดเลขเร็ว', B: 'การสังเกต', C: 'คิดวิเคราะห์' };
+  return {
+    date: date, total: rows.length,
+    wrong: rows.filter(function (r) { return Number(r[7]) !== 1; }).map(function (r) {
+      return { section: secName[r[2]] || String(r[2]), cat: CAT_NAMES[r[3]] || String(r[3]), label: dashTagLabel(r[4]), q: String(r[16] || ''), errType: String(r[11] || ''), tries: Number(r[8]) || 1, revealed: Number(r[9]) === 1, review: Number(r[12]) === 1 };
+    })
+  };
+}
+
+function dashLinkHtml() {
+  var u = dashboardUrl();
+  return u ? '<p style="margin-top:14px;"><a href="' + u + '" style="display:inline-block;padding:8px 14px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;">เปิด Dashboard ผู้ปกครอง</a> <span style="color:#5f6368;font-size:12px;">(ต้องใช้รหัส PARENT_PIN)</span></p>' : '';
+}
+
+/** ลิงก์ Dashboard ใส่ท้ายอีเมล (ถ้าหาไม่ได้ก็ว่าง) */
+function dashboardUrl() {
+  try { var u = ScriptApp.getService().getUrl(); return u ? u + '?page=dashboard' : ''; } catch (e) { return ''; }
 }
 
 // ======================= Code.gs =======================
@@ -2348,6 +2610,13 @@ function sendMonthlyReport() {
 var SHEET_ID = '';
 
 function doGet(e) {
+  // ?page=dashboard = หน้า Dashboard ผู้ปกครอง (ล็อกด้วย PIN) / ไม่ระบุ = หน้าฝึกของลูก (ลิงก์เดิมใช้ต่อได้)
+  if (e && e.parameter && e.parameter.page === 'dashboard') {
+    return HtmlService.createTemplateFromFile('Dashboard').evaluate()
+      .setTitle('Dashboard · ฝึกคณิต ป.4')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
   var t = HtmlService.createTemplateFromFile('Index');
   return t.evaluate()
     .setTitle('ฝึกคณิต ป.4')

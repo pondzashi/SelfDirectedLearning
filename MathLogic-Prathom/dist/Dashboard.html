@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard · ฝึกคณิต ป.4</title>
+<style>
+  :root {
+    --bg: #f4f7fb; --card: #ffffff; --ink: #1f2933; --muted: #62707f; --line: #d9e1ea; --brand: #2563eb; --brand-ink: #ffffff; --soft: #eef2f7;
+    --green: #16a34a; --green-bg: #dcfce7; --yellow: #d97706; --yellow-bg: #fef3c7; --red: #dc2626; --red-bg: #fee2e2; --none: #94a3b8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111827; --card: #1f2937; --ink: #f3f4f6; --muted: #9ca3af; --line: #374151; --brand: #60a5fa; --brand-ink: #0b1220; --soft: #2b3748;
+      --green: #4ade80; --green-bg: #14532d; --yellow: #fbbf24; --yellow-bg: #78350f; --red: #f87171; --red-bg: #7f1d1d; --none: #64748b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Noto Sans Thai", "Sarabun", Tahoma, system-ui, sans-serif; line-height: 1.5; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 14px 14px 60px; }
+  h1 { font-size: 1.5rem; margin: 0; } h2 { font-size: 1.1rem; margin: 0 0 10px; } h3 { font-size: 1rem; margin: 14px 0 6px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; } .grow { flex: 1; }
+  .muted { color: var(--muted); } .small { font-size: .85rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin: 12px 0; }
+  .cols { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .cols .card { margin: 0; }
+  .btn { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 8px 14px; cursor: pointer; min-height: 40px; }
+  .btn.primary { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); font-weight: 600; }
+  input[type=password], input[type=text] { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); min-height: 42px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+  .tab { font: inherit; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; min-height: 40px; }
+  .tab.on { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); font-weight: 600; }
+  .kpi .v { font-size: 2rem; font-weight: 800; line-height: 1.2; }
+  .badge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: .85rem; font-weight: 600; }
+  .b-green { background: var(--green-bg); color: var(--green); } .b-yellow { background: var(--yellow-bg); color: var(--yellow); }
+  .b-red { background: var(--red-bg); color: var(--red); } .b-none { background: var(--soft); color: var(--muted); }
+  .alert { display: flex; gap: 8px; padding: 9px 12px; border-radius: 10px; margin: 6px 0; font-size: .95rem; }
+  .al-warn { background: var(--yellow-bg); } .al-info { background: var(--soft); } .al-good { background: var(--green-bg); }
+  .bar { height: 12px; background: var(--soft); border-radius: 6px; overflow: hidden; } .bar > i { display: block; height: 100%; border-radius: 6px; background: var(--brand); }
+  .bar.g > i { background: var(--green); } .bar.y > i { background: var(--yellow); } .bar.r > i { background: var(--red); }
+  .line { display: grid; grid-template-columns: minmax(110px, 170px) 1fr auto; gap: 10px; align-items: center; margin: 8px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.c, th.c { text-align: center; }
+  tr.click { cursor: pointer; } tr.click:hover { background: var(--soft); }
+  .scroll { overflow-x: auto; }
+  svg { max-width: 100%; height: auto; } svg text { fill: var(--ink); font-size: 11px; } svg .grid { stroke: var(--line); fill: none; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: .85rem; color: var(--muted); margin-top: 4px; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; max-width: 420px; }
+  .cal .h { text-align: center; font-size: .75rem; color: var(--muted); }
+  .cal .d { aspect-ratio: 1; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: .8rem; background: var(--soft); color: var(--muted); }
+  .cal .pass { background: var(--green); color: #fff; } .cal .fail { background: var(--yellow); color: #fff; } .cal .done { background: var(--brand); color: var(--brand-ink); }
+  .cal .miss { background: var(--red-bg); color: var(--red); } .cal .today { outline: 2px solid var(--brand); } .cal .future, .cal .before { opacity: .35; } .cal .rest { opacity: .6; }
+  .cal .d[data-act] { cursor: pointer; }
+  .d-up { color: var(--green); font-weight: 700; } .d-down { color: var(--red); font-weight: 700; } .d-flat { color: var(--muted); font-weight: 700; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: flex-start; justify-content: center; padding: 20px 12px; overflow: auto; z-index: 10; }
+  .modal { background: var(--card); border-radius: 16px; padding: 16px; max-width: 720px; width: 100%; }
+  .q { font-family: ui-monospace, monospace; font-size: .85rem; color: var(--muted); word-break: break-word; }
+  .spinner { text-align: center; padding: 60px 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app" class="wrap"><div class="spinner">กำลังโหลด…</div></div>
+<div id="overlay"></div>
+<script>
+(function () {
+  'use strict';
+  var PIN = '', D = null, TAB = 'overview';
+  try { PIN = sessionStorage.getItem('pin') || ''; } catch (e) { PIN = ''; }
+  var TABS = [['overview', 'ภาพรวม'], ['progress', 'ความก้าวหน้า'], ['compare', 'เทียบรายเดือน'], ['errors', 'ข้อผิดพลาด'], ['history', 'ประวัติ'], ['review', 'ทบทวน & คลัง']];
+  var DOT = { green: '🟢', yellow: '🟡', red: '🔴', none: '⚪' };
+  var TH_M = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'], TH_D = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+  var COLORS = { a: '#2563eb', b: '#0d9488', c: '#db2777', addsub: '#2563eb', mul: '#d97706', div: '#0d9488', fracdec: '#db2777' };
+  var SKILL = { addsub: 'บวกลบ', mul: 'คูณ', div: 'หาร', fracdec: 'เศษส่วนทศนิยม' };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function rpc(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (ok, bad) { var r = google.script.run.withSuccessHandler(ok).withFailureHandler(bad); r[fn].apply(r, args); });
+  }
+  function dmy(s) { var p = String(s).split('-'); return (+p[2]) + ' ' + TH_M[+p[1] - 1]; }
+  function dmyFull(s) { var p = String(s).split('-'); return (+p[2]) + ' ' + TH_M[+p[1] - 1] + ' ' + (+p[0] + 543); }
+  function mmss(sec) { sec = Math.round(sec || 0); return Math.floor(sec / 60) + ':' + ('0' + (sec % 60)).slice(-2); }
+  function col(p) { var g = D.thresholds.green, y = D.thresholds.yellow; return p == null ? 'none' : p >= g ? 'green' : p >= y ? 'yellow' : 'red'; }
+  function pctBadge(p) { return p == null ? '<span class="badge b-none">–</span>' : '<span class="badge b-' + col(p) + '">' + DOT[col(p)] + ' ' + p + '%</span>'; }
+  function fail(e) { $('app').innerHTML = '<div class="card"><h2>เกิดข้อผิดพลาด</h2><p>' + esc(e && e.message ? e.message : e) + '</p><button class="btn" data-act="reload">ลองใหม่</button></div>'; }
+
+  /* ---------- เข้าสู่ระบบ ---------- */
+  function boot() { rpc('dash_check', PIN).then(function (r) { if (r.ok) load(); else login(r); }).catch(fail); }
+  function login(r) {
+    var msg = { nopin: 'ยังไม่ได้ตั้งรหัสผู้ปกครอง ให้เปิดแท็บ "ตั้งค่า" ในชีต แล้วกรอกรหัสในแถว PARENT_PIN', locked: 'ใส่รหัสผิดหลายครั้ง ถูกล็อกชั่วคราว 10 นาที ลองใหม่ภายหลัง',
+      wrong: 'รหัสไม่ถูกต้อง (เหลืออีก ' + (r.left == null ? '' : r.left) + ' ครั้ง)', need: '' }[r.reason] || '';
+    var form = (r.reason === 'nopin' || r.reason === 'locked') ? '' : '<div class="row"><input type="password" id="pin" placeholder="รหัสผู้ปกครอง" autocomplete="off"><button class="btn primary" data-act="pin">เข้าสู่ระบบ</button></div>';
+    $('app').innerHTML = '<div class="card" style="max-width:480px;margin:40px auto"><h1>Dashboard ผู้ปกครอง</h1><p class="muted">ฝึกคณิต ป.4</p>' + (msg ? '<p>' + esc(msg) + '</p>' : '') + form + '</div>';
+    if ($('pin')) $('pin').focus();
+  }
+  function load() { return rpc('dash_getBundle', PIN).then(function (b) { D = b; render(); }).catch(function (e) { PIN = ''; try { sessionStorage.removeItem('pin'); } catch (x) {} fail(e); }); }
+
+  /* ---------- กราฟ SVG ---------- */
+  function lineChart(dates, series, o) {
+    o = o || {};
+    var W = 640, H = o.h || 240, L = 36, R = 12, T = 12, B = 28, n = dates.length, max = o.max || 100;
+    if (!n) return '<p class="muted small">ยังไม่มีข้อมูลให้แสดงกราฟ</p>';
+    var X = function (i) { return n === 1 ? (L + W - R) / 2 : L + (W - L - R) * i / (n - 1); }, Y = function (v) { return T + (H - T - B) * (1 - Math.min(v, max) / max); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(o.label || 'กราฟ') + '">';
+    var ticks = o.ticks || [0, 25, 50, 75, 100];
+    ticks.forEach(function (v) { s += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/><text x="' + (L - 6) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + v + '</text>'; });
+    (o.refs || []).forEach(function (r) { s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(r.v) + '" y2="' + Y(r.v) + '" stroke="' + r.color + '" stroke-dasharray="5 4" opacity=".8"/>'; });
+    var step = Math.max(1, Math.ceil(n / 7));
+    dates.forEach(function (d, i) { if (i % step === 0 || i === n - 1) s += '<text x="' + X(i) + '" y="' + (H - 8) + '" text-anchor="middle">' + esc(dmy(d)) + '</text>'; });
+    series.forEach(function (se) {
+      var seg = [], segs = [];
+      se.vals.forEach(function (v, i) { if (v == null) { if (seg.length) segs.push(seg); seg = []; } else seg.push([X(i), Y(v)]); });
+      if (seg.length) segs.push(seg);
+      segs.forEach(function (g) { if (g.length > 1) s += '<polyline fill="none" stroke="' + se.color + '" stroke-width="2" points="' + g.map(function (p) { return p[0] + ',' + p[1]; }).join(' ') + '"/>'; });
+      se.vals.forEach(function (v, i) { if (v != null) s += '<circle cx="' + X(i) + '" cy="' + Y(v) + '" r="4" fill="' + se.color + '"><title>' + esc(se.name + ' ' + v + (o.unit || '') + ' · ' + dmy(dates[i])) + '</title></circle>'; });
+    });
+    s += '</svg><div class="legend">' + series.map(function (se) { return '<span><b style="color:' + se.color + '">●</b> ' + esc(se.name) + '</span>'; }).join('') + (o.note ? '<span>' + esc(o.note) + '</span>' : '') + '</div>';
+    return s;
+  }
+  function radar(items) {
+    var pts = items.filter(function (i) { return i.base != null || i.cur != null; });
+    if (pts.length < 3) return '<p class="muted small">ต้องมีผลวัดอย่างน้อย 3 หมวดจึงจะแสดงเรดาร์</p>';
+    var W = 440, H = 340, cx = W / 2, cy = H / 2 + 4, R = 110, n = items.length;
+    function pt(i, r) { var a = -Math.PI / 2 + 2 * Math.PI * i / n; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="เรดาร์เทียบผลตอนเริ่มกับล่าสุด">';
+    [25, 50, 75, 100].forEach(function (lv) { s += '<polygon class="grid" points="' + items.map(function (_, i) { return pt(i, R * lv / 100).join(','); }).join(' ') + '"/>'; });
+    items.forEach(function (it, i) {
+      var p = pt(i, R), q = pt(i, R + 16), a = q[0] - cx;
+      s += '<line class="grid" x1="' + cx + '" y1="' + cy + '" x2="' + p[0] + '" y2="' + p[1] + '"/><text x="' + q[0] + '" y="' + (q[1] + 4) + '" text-anchor="' + (Math.abs(a) < 8 ? 'middle' : a > 0 ? 'start' : 'end') + '">' + esc(it.name) + '</text>';
+    });
+    function poly(key, color, op) { return '<polygon points="' + items.map(function (it, i) { return pt(i, R * (it[key] || 0) / 100).join(','); }).join(' ') + '" fill="' + color + '" fill-opacity="' + op + '" stroke="' + color + '" stroke-width="2"/>'; }
+    s += poly('base', '#94a3b8', .15) + poly('cur', COLORS.a, .22) + '</svg>';
+    return s + '<div class="legend"><span><b style="color:#94a3b8">●</b> ตอนวัดระดับ</span><span><b style="color:' + COLORS.a + '">●</b> ล่าสุด</span></div>';
+  }
+  function calendar(cal, clickable) {
+    var h = '<div class="cal">' + TH_D.map(function (d) { return '<div class="h">' + d + '</div>'; }).join('');
+    cal.forEach(function (c) {
+      var act = clickable && (c.status === 'pass' || c.status === 'fail' || c.status === 'done');
+      h += '<div class="d ' + c.status + '" title="' + esc(dmyFull(c.date)) + '"' + (act ? ' data-act="day" data-v="' + c.date + '"' : '') + '>' + (+c.date.slice(8)) + '</div>';
+    });
+    return h + '</div><div class="legend"><span><b style="color:var(--green)">■</b> ผ่าน</span><span><b style="color:var(--yellow)">■</b> ไม่ผ่าน</span><span><b style="color:var(--brand)">■</b> วัดระดับ/วัดผล</span><span><b style="color:var(--red)">■</b> ไม่ได้ทำ</span></div>';
+  }
+  function skillBars() {
+    return D.skills.map(function (k) {
+      var warn = k.fails >= 1 ? ' <span class="badge b-yellow">ไม่ผ่านติดกัน ' + k.fails + '</span>' : '';
+      return '<div class="line"><div><b>' + esc(k.name) + '</b><div class="small muted">ขั้น ' + k.step + '/' + k.total + '</div></div><div><div class="bar"><i style="width:' + k.pct + '%"></i></div><div class="small muted">' + esc(k.stepName) + '</div></div><div>' + warn + '</div></div>';
+    }).join('');
+  }
+  function hbars(list, valFn, labelFn, colorFn) {
+    var mx = Math.max.apply(null, list.map(valFn).concat([1]));
+    return list.map(function (x) { var v = valFn(x); return '<div class="line"><div>' + labelFn(x) + '</div><div class="bar ' + (colorFn ? colorFn(x) : '') + '"><i style="width:' + Math.round(v / mx * 100) + '%"></i></div><div class="small">' + v + '</div></div>'; }).join('');
+  }
+
+  /* ---------- แท็บ ---------- */
+  function render() {
+    var h = '<div class="row"><div class="grow"><h1>Dashboard · ' + esc(D.title) + '</h1><div class="muted small">' + esc(D.child) + ' · วันนี้ ' + esc(dmyFull(D.today)) + (D.startDate ? ' · เริ่ม ' + esc(dmyFull(D.startDate)) : '') + '</div></div><button class="btn" data-act="reload">รีเฟรช</button></div>' +
+      '<div class="tabs">' + TABS.map(function (t) { return '<button class="tab' + (TAB === t[0] ? ' on' : '') + '" data-act="tab" data-v="' + t[0] + '">' + esc(t[1]) + '</button>'; }).join('') + '</div>';
+    h += ({ overview: overview, progress: progress, compare: compare, errors: errors, history: history, review: review })[TAB]();
+    $('app').innerHTML = h;
+  }
+  function overview() {
+    var k = D.kpi, t = k.today, m = k.month;
+    var h = '<div class="cols">';
+    h += '<div class="card kpi"><div class="muted">วันนี้</div>' + (t ? '<div class="v">✅ ทำแล้ว</div><div class="small">' + (t.pass === 'ผ่าน' ? '<span class="badge b-green">ผ่านขั้น</span> ' : t.pass === 'ไม่ผ่าน' ? '<span class="badge b-yellow">ยังไม่ผ่านขั้น</span> ' : '') + 'A ' + (t.aPct == null ? '–' : t.aPct + '%') + ' · B ' + (t.bPct == null ? '–' : t.bPct + '%') + ' · C ' + (t.cPct == null ? '–' : t.cPct + '%') + '</div>' : '<div class="v">⏳ ยังไม่ทำ</div><div class="small muted">รอลูกทำชุดวันนี้</div>') + '</div>';
+    h += '<div class="card kpi"><div class="muted">ทำติดต่อกัน</div><div class="v">🔥 ' + k.streak + ' วัน</div><div class="small muted">ทั้งหมด ' + k.sessions + ' ครั้ง</div></div>';
+    h += '<div class="card kpi"><div class="muted">เดือนนี้</div><div class="v">' + m.days + ' วัน</div><div class="small muted">' + (m.dailyCount ? 'ผ่านส่วน A ' + m.passN + '/' + m.dailyCount + ' ครั้ง · แม่นยำ A เฉลี่ย ' + m.avgA + '%' : 'ยังไม่มีชุดประจำวัน') + '</div></div>';
+    h += '<div class="card kpi"><div class="muted">รอทบทวน</div><div class="v">♻ ' + k.pendingReviews + '</div><div class="small muted">ครบกำหนดแล้ว ' + k.dueReviews + ' ข้อ</div></div></div>';
+    if (D.alerts.length) h += '<div class="card"><h2>ข้อควรสนใจ</h2>' + D.alerts.map(function (a) { return '<div class="alert al-' + a.level + '">' + ({ warn: '⚠️', info: 'ℹ️', good: '🌟' }[a.level]) + '<div>' + esc(a.text) + '</div></div>'; }).join('') + '</div>';
+    h += '<div class="card"><h2>ขั้นปัจจุบันของแต่ละทักษะ</h2>' + skillBars() + (D.placement.done ? '' : '<p class="small muted">ขั้นเริ่มต้นจะกำหนดหลังแบบวัดระดับครบ ' + D.placement.of + ' วัน (ตอนนี้ ' + D.placement.days + ')</p>') + '</div>';
+    var s = D.series, last = Math.max(0, s.dates.length - 14), sl = function (a) { return a.slice(last); };
+    h += '<div class="cols"><div class="card"><h2>ปฏิทินการฝึก</h2>' + calendar(D.calendar, true) + '</div><div class="card"><h2>แม่นยำรอบแรก (14 ครั้งล่าสุด)</h2>' +
+      lineChart(sl(s.dates), [{ name: 'A คิดเลขเร็ว', color: COLORS.a, vals: sl(s.a) }, { name: 'B สังเกต', color: COLORS.b, vals: sl(s.b) }, { name: 'C วิเคราะห์', color: COLORS.c, vals: sl(s.c) }], { refs: [{ v: D.thresholds.yellow, color: 'var(--yellow)' }, { v: D.thresholds.green, color: 'var(--green)' }], unit: '%', label: 'ความแม่นยำรอบแรก', note: 'เส้นประ = เกณฑ์ 🟡/🟢' }) + '</div></div>';
+    return h;
+  }
+  function progress() {
+    var s = D.series, maxStep = Math.max.apply(null, D.skills.map(function (k) { return k.total; }));
+    var ratioMax = Math.max(200, Math.min(400, Math.ceil(Math.max.apply(null, s.ratio.filter(function (v) { return v != null; }).concat([100])) / 50) * 50));
+    var h = '<div class="card"><h2>ความแม่นยำรอบแรก (% ถูก) แยกตามส่วน</h2>' +
+      lineChart(s.dates, [{ name: 'A คิดเลขเร็ว', color: COLORS.a, vals: s.a }, { name: 'B การสังเกต', color: COLORS.b, vals: s.b }, { name: 'C คิดวิเคราะห์', color: COLORS.c, vals: s.c }], { refs: [{ v: D.thresholds.yellow, color: 'var(--yellow)' }, { v: D.thresholds.green, color: 'var(--green)' }], unit: '%', note: 'เส้นประ = เกณฑ์ 🟡/🟢' }) + '</div>';
+    h += '<div class="card"><h2>ส่วน A: เวลารวม ÷ เวลาเป้าหมาย</h2><p class="small muted">ต่ำกว่าเส้น 100% = ทันเวลา (นับเฉพาะชุดประจำวัน)</p>' +
+      lineChart(s.dates, [{ name: 'เวลา ÷ เป้า', color: '#d97706', vals: s.ratio }], { max: ratioMax, ticks: [0, ratioMax / 2, ratioMax], refs: [{ v: 100, color: 'var(--green)' }], unit: '%' }) + '</div>';
+    h += '<div class="card"><h2>ขั้นของแต่ละทักษะตามเวลา</h2>' +
+      lineChart(s.dates, Object.keys(s.steps).map(function (k) { return { name: SKILL[k], color: COLORS[k], vals: s.steps[k] }; }), { max: maxStep, ticks: [0, 3, 6, 9, 12, 15].filter(function (v) { return v <= maxStep; }), label: 'ขั้นของแต่ละทักษะ' }) + '</div>';
+    return h + '<div class="card"><h2>ปฏิทินการฝึก 6 สัปดาห์</h2>' + calendar(D.calendar, true) + '</div>';
+  }
+  function deltaCell(d) { return d ? '<span class="d-' + d.cls + '">' + esc(d.text) + '</span>' : '–'; }
+  function compare() {
+    var r = D.report;
+    if (!r.periods.length) return '<div class="card"><h2>เทียบรายเดือน</h2><p class="muted">ยังไม่มีข้อมูล จะเริ่มแสดงเมื่อทำแบบวัดระดับครบ 5 วัน</p></div>';
+    var last = r.periods.length - 1;
+    var h = '<div class="card"><h2>สรุป</h2><p><b>' + esc(r.summary) + '</b></p><div class="small muted">ข้อวัดผลระดับเดียวกันทุกครั้ง · ▲ ดีขึ้น ▼ แย่ลง ● เปลี่ยนไม่เกิน ±' + D.deltaThreshold + ' (เวลา: ลดลง = ดีขึ้น)</div></div>';
+    h += '<div class="cols"><div class="card"><h2>เรดาร์ ตอนเริ่ม vs ล่าสุด</h2>' + radar(D.radar) + '</div><div class="card"><h2>% ถูกแต่ละหมวด</h2>' +
+      lineChart(r.periods.map(function (p) { return p.date || p.label; }), r.cats.map(function (c, i) { return { name: c.name, color: ['#2563eb', '#d97706', '#0d9488', '#db2777', '#7c3aed', '#059669', '#dc2626'][i % 7], vals: c.pcts }; }), { unit: '%', label: 'ผลแต่ละหมวด' }) + '</div></div>';
+    h += '<div class="card scroll"><h2>ตารางเทียบ</h2><table><tr><th>หมวด</th>' + r.periods.map(function (p) { return '<th class="c">' + esc(p.label) + '<div class="small muted">' + esc(p.date ? dmy(p.date) : '') + '</div></th>'; }).join('') + (last >= 1 ? '<th class="c">เทียบเดือนก่อน</th><th class="c">เทียบเริ่มต้น</th>' : '') + '</tr>';
+    r.cats.forEach(function (c) {
+      h += '<tr><td><b>' + esc(c.name) + '</b></td>' + c.pcts.map(function (v, i) { return '<td class="c">' + (v == null ? '–' : pctBadge(v)) + (c.hasSpeed && c.spis[i] != null ? '<div class="small muted">' + c.spis[i] + ' วิ/ข้อ</div>' : '') + '</td>'; }).join('') +
+        (last >= 1 ? '<td class="c">' + deltaCell(c.rows.dPrev[last]) + (c.hasSpeed ? '<div class="small">เวลา ' + deltaCell(c.rows.sPrev[last]) + '</div>' : '') + '</td><td class="c">' + deltaCell(c.rows.dBase[last]) + (c.hasSpeed ? '<div class="small">เวลา ' + deltaCell(c.rows.sBase[last]) + '</div>' : '') + '</td>' : '') + '</tr>';
+    });
+    return h + '</table></div>';
+  }
+  function errors() {
+    var e = D.errors30, e14 = D.errors14;
+    if (!e.total) return '<div class="card"><h2>ข้อผิดพลาด</h2><p class="muted">ยังไม่มีข้อมูลใน 30 วันที่ผ่านมา</p></div>';
+    var h = '<div class="cols"><div class="card"><h2>ประเภทข้อผิดพลาดที่พบบ่อย <span class="small muted">(30 วัน)</span></h2>' + (e.types.length ? hbars(e.types.slice(0, 8), function (x) { return x.n; }, function (x) { return esc(x.type); }) : '<p class="muted">ไม่มีข้อผิด 🎉</p>') +
+      '<p class="small muted">14 วันล่าสุด: ' + (e14.types.slice(0, 3).map(function (x) { return esc(x.type) + ' ×' + x.n; }).join(', ') || '–') + '</p></div>' +
+      '<div class="card"><h2>หมวดที่ผิดรอบแรกมากสุด <span class="small muted">(สัดส่วนผิด)</span></h2>' + hbars(e.cats, function (x) { return x.pctWrong || 0; }, function (x) { return esc(x.name) + ' <span class="small muted">(' + x.wrong + '/' + x.total + ')</span>'; }, function (x) { return (x.pctWrong || 0) <= 15 ? 'g' : (x.pctWrong || 0) <= 40 ? 'y' : 'r'; }) + '</div></div>';
+    h += '<div class="card scroll"><h2>ขั้น/แบบโจทย์ที่ควรช่วย</h2>' + (e.tags.length ? '<table><tr><th>รายการ</th><th class="c">ผิด/ทั้งหมด</th><th>ตัวอย่างข้อที่ผิด</th></tr>' + e.tags.map(function (t) {
+      return '<tr><td>' + esc(t.label) + '</td><td class="c"><span class="badge b-' + (t.pctWrong <= 15 ? 'green' : t.pctWrong <= 40 ? 'yellow' : 'red') + '">' + t.pctWrong + '% ผิด</span> <span class="small muted">' + t.wrong + '/' + t.total + '</span></td><td class="q">' + esc(t.sample) + '</td></tr>'; }).join('') + '</table>' : '<p class="muted">ยังไม่พบจุดที่ผิดซ้ำ ๆ (ต้องผิดอย่างน้อย 2 ครั้งจาก 3 ครั้งขึ้นไป)</p>') + '</div>';
+    return h;
+  }
+  function history() {
+    var h = '<div class="card scroll"><h2>ประวัติการทำ <span class="small muted">(กดแถวเพื่อดูข้อที่ผิด)</span></h2>';
+    if (!D.history.length) return h + '<p class="muted">ยังไม่มีประวัติ</p></div>';
+    h += '<table><tr><th>วันที่</th><th>ประเภท</th><th>ส่วน A</th><th class="c">ผล A</th><th class="c">A</th><th class="c">B</th><th class="c">C</th><th class="c">เวลา A</th><th class="c">รอบแก้</th></tr>';
+    D.history.forEach(function (s) {
+      h += '<tr class="click" data-act="day" data-v="' + esc(s.date) + '"><td>' + esc(dmy(s.date)) + '</td><td>' + esc(s.mode) + '</td><td>' + esc((s.skillName || '') + ' ' + (s.stepLabel || '')) + '</td><td class="c">' + (s.pass === 'ผ่าน' ? '<span class="badge b-green">ผ่าน</span>' : s.pass === 'ไม่ผ่าน' ? '<span class="badge b-yellow">ไม่ผ่าน</span>' : '–') +
+        '</td><td class="c">' + pctBadge(s.aPct) + '</td><td class="c">' + pctBadge(s.bPct) + '</td><td class="c">' + pctBadge(s.cPct) + '</td><td class="c">' + mmss(s.A.totalSec) + (s.A.target ? '<div class="small muted">/ ' + mmss(s.A.target) + '</div>' : '') + '</td><td class="c">' + s.A.rounds + '</td></tr>';
+    });
+    return h + '</table></div>';
+  }
+  function review() {
+    var rv = D.reviews, h = '<div class="cols"><div class="card"><h2>คิวทบทวน</h2><p>รอทั้งหมด <b>' + rv.pending + '</b> รายการ · ครบกำหนดแล้ว <b>' + D.kpi.dueReviews + '</b></p><p class="small muted">ข้อที่ผิดจะกลับมาหลัง 3 วันและ 1 สัปดาห์ ด้วยตัวเลขใหม่</p>';
+    h += rv.due.length ? '<table><tr><th>รายการ</th><th>ครบกำหนด</th></tr>' + rv.due.map(function (r) { return '<tr><td>' + esc(r.label) + '</td><td>' + esc(dmy(r.due)) + '</td></tr>'; }).join('') + '</table>' : '<p class="muted">ไม่มีข้อครบกำหนด</p>';
+    h += '</div><div class="card"><h2>คลังข้อสอบ</h2><p class="small muted">ข้อที่ยังไม่ได้ใช้ใน 45 วัน (ข้อสด) ต่อหมวด เพิ่มข้อใหม่ได้ในแท็บ "คลังข้อสอบ" ของชีต</p>' +
+      (D.bank.length ? hbars(D.bank, function (b) { return b.fresh; }, function (b) { return esc(b.cat) + ' <span class="small muted">(ทั้งหมด ' + b.total + ')</span>'; }, function (b) { return b.fresh < 8 ? 'r' : b.fresh < 15 ? 'y' : 'g'; }) : '<p class="muted">–</p>') + '</div></div>';
+    return h;
+  }
+
+  function dayModal(date) {
+    $('overlay').innerHTML = '<div class="modal-bg" data-act="close"><div class="modal" data-act="keep"><div class="spinner">กำลังโหลด…</div></div></div>';
+    rpc('dash_getSession', PIN, date).then(function (r) {
+      var h = '<div class="row"><h2 class="grow">' + esc(dmyFull(date)) + '</h2><button class="btn" data-act="close">ปิด</button></div><p class="muted small">ทั้งหมด ' + r.total + ' ข้อ · ผิดรอบแรก ' + r.wrong.length + ' ข้อ</p>';
+      h += r.wrong.length ? '<div class="scroll"><table><tr><th>ส่วน</th><th>ที่มา</th><th>โจทย์</th><th>ประเภท</th><th class="c">ครั้ง</th></tr>' + r.wrong.map(function (w) {
+        return '<tr><td>' + esc(w.section) + '</td><td>' + esc(w.label) + (w.review ? ' ♻' : '') + '</td><td class="q">' + esc(w.q) + '</td><td>' + esc(w.errType) + '</td><td class="c">' + w.tries + (w.revealed ? '<div class="small">ดูเฉลย</div>' : '') + '</td></tr>'; }).join('') + '</table></div>' : '<p>ไม่มีข้อที่ผิดรอบแรก 🎉</p>';
+      $('overlay').innerHTML = '<div class="modal-bg" data-act="close"><div class="modal" data-act="keep">' + h + '</div></div>';
+    }).catch(function (e) { $('overlay').innerHTML = '<div class="modal-bg" data-act="close"><div class="modal">' + esc(e && e.message || e) + '</div></div>'; });
+  }
+
+  document.addEventListener('click', function (ev) {
+    var el = ev.target; while (el && el !== document && !(el.getAttribute && el.getAttribute('data-act'))) el = el.parentNode;
+    if (!el || el === document) return;
+    var act = el.getAttribute('data-act');
+    if (act === 'keep') return;
+    if (act === 'tab') { TAB = el.getAttribute('data-v'); render(); window.scrollTo(0, 0); }
+    else if (act === 'reload') { $('app').innerHTML = '<div class="spinner">กำลังโหลด…</div>'; boot(); }
+    else if (act === 'pin') submitPin();
+    else if (act === 'day') dayModal(el.getAttribute('data-v'));
+    else if (act === 'close') { if (ev.target === el || el.tagName === 'BUTTON') $('overlay').innerHTML = ''; }
+  });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && $('pin') && document.activeElement === $('pin')) submitPin(); if (ev.key === 'Escape') $('overlay').innerHTML = ''; });
+  function submitPin() {
+    PIN = ($('pin').value || '').trim(); if (!PIN) return;
+    try { sessionStorage.setItem('pin', PIN); } catch (e) {}
+    rpc('dash_check', PIN).then(function (r) { if (r.ok) load(); else { PIN = ''; try { sessionStorage.removeItem('pin'); } catch (e) {} login(r); } }).catch(fail);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
