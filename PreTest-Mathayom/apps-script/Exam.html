@@ -15,7 +15,8 @@
 .banner { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 30; padding: 10px 20px; border-radius: 10px; font-weight: 700; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
 .banner.amber { background: var(--warn); color: #111; } .banner.red { background: var(--red); color: #fff; }
 .layout { display: grid; grid-template-columns: 1fr; gap: 14px; }
-@media (min-width: 900px) { .layout { grid-template-columns: 1fr 240px; } .drawer-btn { display: none; } .panel { display: block !important; } }
+@media (min-width: 900px) { .layout { grid-template-columns: 1fr 240px; } .drawer-btn, .finish-inline { display: none; } .panel { display: block !important; } }
+.finish-inline { width: 100%; margin-top: 10px; }
 .panel { display: none; }
 .panel.open { display: block; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 6px; }
@@ -212,7 +213,9 @@ function renderExam() {
       '<button class="btn' + (q.flagged ? ' primary' : '') + '" data-act="flag">🚩 ' + (q.flagged ? 'ปักธงแล้ว' : 'ปักธง') + '</button>';
   }
   ctrl += '<button class="btn" data-act="next"' + (S.cur >= st.questions.length - 1 ? ' disabled' : '') + '>ถัดไป →</button>' +
-    '<span class="grow"></span><button class="btn drawer-btn" data-act="drawer">แผงเลขข้อ</button></div>';
+    '<span class="grow"></span><button class="btn drawer-btn" data-act="drawer">แผงเลขข้อ</button></div>' +
+    // จอแคบ (มือถือ/iPad แนวตั้ง) แผงเลขข้อถูกซ่อน จึงต้องมีปุ่มส่งนอกแผงด้วย
+    '<button class="btn primary finish-inline" data-act="finish">' + (st.isLast ? 'ส่งข้อสอบ' : 'จบวิชานี้ → วิชาต่อไป') + '</button>';
   var panel = '<div class="card panel" id="panel"><h3>แผงเลขข้อ</h3><div class="grid">' + st.questions.map(function (x, i) {
     var c = 'num' + (i === S.cur ? ' cur' : '') + (x.chosen || x.reveal ? ' done' : (x.skipped ? ' skip' : ''));
     return '<button class="' + c + '" data-act="go" data-i="' + i + '">' + (i + 1) + (x.flagged ? '<span class="flag">🚩</span>' : '') + '</button>';
