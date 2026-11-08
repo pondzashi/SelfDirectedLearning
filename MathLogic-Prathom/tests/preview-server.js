@@ -1,12 +1,12 @@
 /**
  * เซิร์ฟเวอร์พรีวิวหน้าจอ (ไม่ใช้ Google): node tests/preview-server.js [port]
- * เปิด http://localhost:8765/?mode=daily&skill=fracdec  หรือ  ?mode=placement&day=0  หรือ  ?mode=benchmark
+ * เปิด http://localhost:8765/?mode=daily&topic=add&set=1&round=1 (topic=add|sub|mul|div|frac)  หรือ  ?mode=placement&day=0  หรือ  ?mode=benchmark
  * จำลอง google.script.run ด้วยตัวสร้างโจทย์จริงของโปรเจกต์
  */
 const fs = require('fs'), path = require('path'), vm = require('vm'), http = require('http');
 const DIR = path.join(__dirname, '..', 'apps-script');
 const ctx = vm.createContext({ console, Math, Date, JSON, Object, Array, String, Number, RegExp, Error });
-['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'SetBuilder.gs'].forEach(f => vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), ctx, { filename: f }));
+['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'Curriculum.gs', 'SetBuilder.gs'].forEach(f => vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), ctx, { filename: f }));
 const G = n => vm.runInContext(n, ctx);
 const port = +process.argv[2] || 8765;
 
@@ -15,7 +15,8 @@ function coreSrc() {
 }
 function makeSet(q) {
   const bank = G('BANK_SEED_ROWS').map((r, i) => ({ code: 'F' + (i + 1), cat: r[0], level: r[1], q: r[2], ans: r[3], explain: r[4], choices: r[5] || '' }));
-  const ctx2 = { levels: { addsub: +q.step || 3, mul: 1, div: 1, fracdec: +q.step || 1, tiers: { word: 2, observe: 2, analytic: 2 } }, skill: q.skill || 'addsub', usedSigs: {}, recentTpl: {}, bank, bankUsed: {}, reviews: [] };
+  const rd = {}; ['add', 'sub', 'mul', 'div', 'frac'].forEach(t => { rd[t] = +q.round || 1; });
+  const ctx2 = { levels: { addsub: +q.step || 3, mul: 1, div: 1, fracdec: +q.step || 1, tiers: { word: 2, observe: 2, analytic: 2 } }, skill: q.skill || 'addsub', usedSigs: {}, recentTpl: {}, bank, bankUsed: {}, reviews: [], rot: { topic: q.topic || 'add', setNo: +q.set || 1, repeat: q.repeat === '1', weekNo: 1 }, rounds: rd, yFactor: 1.5 };
   G('setRng')(G('mulberry32')(Date.now() % 100000));
   let set;
   if (q.mode === 'placement') set = G('buildPlacementDay')(ctx2, +q.day || 0);
@@ -24,7 +25,7 @@ function makeSet(q) {
   if (q.tpl) { set.sections[0].items = q.tpl.split(',').map(id => { const it = G('buildTemplate')(id, +q.tier || 2); it.sig = it.key + Math.random(); return it; }); set.sections[0].kind = 'plain'; set.sections[0].recSec = 300; delete set.sections[0].mainCount; }
   // ย่อชุดเพื่อทดสอบเร็ว
   const n = +q.n || 0;
-  if (n) set.sections.forEach(s => { s.items = s.items.slice(0, n); if (s.mainCount) s.mainCount = Math.min(s.mainCount, n); });
+  if (n) set.sections.forEach(s => { if (s.pages) return; s.items = s.items.slice(0, n); if (s.mainCount) s.mainCount = Math.min(s.mainCount, n); });
   set.status = 'ready'; set.date = '2026-11-09'; set.child = 'น้อง'; set.childName = q.name || ''; set.aMaxSec = 1200;
   return set;
 }
@@ -38,7 +39,7 @@ window.google = { script: { run: (function () {
     return function (arg) { setTimeout(function () {
       window.__log.push([name, arg]);
       if (name === 'getTodaySet') ok(window.__sets);
-      else if (name === 'submitSession') ok({ ok: true, summary: { sections: arg.sections.map(function (s) { return { id: s.id, name: s.name, right: s.items.filter(function (i) { return i.ok1; }).length, total: s.items.length, totalSec: s.totalSec, rounds: s.rounds }; }), note: 'ทดสอบ: ผลจำลอง', drill: arg.sections[0].kind === 'drill' ? { pass: true } : null } });
+      else if (name === 'submitSession') ok({ ok: true, summary: { sections: arg.sections.map(function (s) { return { id: s.id, name: s.name, right: s.items.filter(function (i) { return i.ok1; }).length, total: s.items.length, totalSec: s.totalSec, rounds: s.rounds }; }), note: 'ทดสอบ: ผลจำลอง', drill: arg.sections[0].topic ? { topic: arg.sections[0].topic, topicName: 'บวก', round: arg.sections[0].round, setNo: arg.sections[0].setNo, assessment: arg.sections[0].assessment, outcome: 'pass', event: 'advance', pages: arg.sections[0].pages.map(function (x) { return x.sec; }) } : null } });
       else ok({ ok: true });
     }, 120); };
   } }); }

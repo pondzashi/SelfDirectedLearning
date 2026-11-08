@@ -69,7 +69,7 @@
   var TABS = [['overview', 'ภาพรวม'], ['progress', 'ความก้าวหน้า'], ['compare', 'เทียบรายเดือน'], ['errors', 'ข้อผิดพลาด'], ['history', 'ประวัติ'], ['review', 'ทบทวน & คลัง']];
   var DOT = { green: '🟢', yellow: '🟡', red: '🔴', none: '⚪' };
   var TH_M = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'], TH_D = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
-  var COLORS = { a: '#2563eb', b: '#0d9488', c: '#db2777', addsub: '#2563eb', mul: '#d97706', div: '#0d9488', fracdec: '#db2777' };
+  var COLORS = { a: '#2563eb', b: '#0d9488', c: '#db2777', add: '#2563eb', sub: '#7c3aed', mul: '#d97706', div: '#0d9488', frac: '#db2777' };
   var SKILL = { addsub: 'บวกลบ', mul: 'คูณ', div: 'หาร', fracdec: 'เศษส่วนทศนิยม' };
 
   function $(id) { return document.getElementById(id); }
@@ -142,10 +142,20 @@
     return h + '</div><div class="legend"><span><b style="color:var(--green)">■</b> ผ่าน</span><span><b style="color:var(--yellow)">■</b> ไม่ผ่าน</span><span><b style="color:var(--brand)">■</b> วัดระดับ/วัดผล</span><span><b style="color:var(--red)">■</b> ไม่ได้ทำ</span></div>';
   }
   function skillBars() {
-    return D.skills.map(function (k) {
-      var warn = k.fails >= 1 ? ' <span class="badge b-yellow">ไม่ผ่านติดกัน ' + k.fails + '</span>' : '';
-      return '<div class="line"><div><b>' + esc(k.name) + '</b><div class="small muted">ขั้น ' + k.step + '/' + k.total + '</div></div><div><div class="bar"><i style="width:' + k.pct + '%"></i></div><div class="small muted">' + esc(k.stepName) + '</div></div><div>' + warn + '</div></div>';
+    return D.topics.map(function (k) {
+      var tag = k.current ? ' <span class="badge b-green">สัปดาห์นี้ · ชุด ' + k.setNo + '/6' + (k.repeat ? ' (ทำซ้ำ)' : '') + '</span>' : '';
+      var last = k.last ? '<div class="small muted">ผลล่าสุด: ' + esc(k.last) + (k.lastDate ? ' · ' + esc(dmy(k.lastDate)) : '') + '</div>' : '';
+      return '<div class="line"><div><b>' + esc(k.name) + '</b>' + tag + '<div class="small muted">รอบ ' + k.round + ' · ทำครบ ' + k.weeks + ' สัปดาห์</div></div><div><div class="bar"><i style="width:' + k.pct + '%"></i></div>' + last + '</div></div>';
     }).join('');
+  }
+  function trendBlock() {
+    var rows = D.trend.filter(function (t) { return t.points.length; });
+    if (!rows.length) return '<p class="small muted">ยังไม่มีผลชุดประเมิน (ชุดที่ 6) จะเริ่มแสดงเมื่อจบสัปดาห์แรก</p>';
+    return '<table><tr><th>หัวข้อ</th><th>ผลชุดประเมินแต่ละครั้ง (เวลาที่ใช้ ÷ เป้า X)</th></tr>' + rows.map(function (t) {
+      return '<tr><td><b>' + esc(t.name) + '</b></td><td>' + t.points.map(function (p) {
+        return '<span class="badge b-' + (p.outcome === 'ผ่าน' ? 'green' : p.outcome === 'ผ่าน(ช้า)' ? 'yellow' : 'red') + '">รอบ ' + p.round + (p.repeat ? ' ซ้ำ' : '') + ': ' + mmss(p.totalSec) + (p.x ? ' / ' + mmss(p.x) + ' (' + p.ratio + '%)' : '') + ' ' + esc(p.outcome) + '</span> ';
+      }).join('') + '</td></tr>';
+    }).join('') + '</table>';
   }
   function hbars(list, valFn, labelFn, colorFn) {
     var mx = Math.max.apply(null, list.map(valFn).concat([1]));
@@ -162,26 +172,27 @@
   function overview() {
     var k = D.kpi, t = k.today, m = k.month;
     var h = '<div class="cols">';
-    h += '<div class="card kpi"><div class="muted">วันนี้</div>' + (t ? '<div class="v">✅ ทำแล้ว</div><div class="small">' + (t.pass === 'ผ่าน' ? '<span class="badge b-green">ผ่านขั้น</span> ' : t.pass === 'ไม่ผ่าน' ? '<span class="badge b-yellow">ยังไม่ผ่านขั้น</span> ' : '') + 'A ' + (t.aPct == null ? '–' : t.aPct + '%') + ' · B ' + (t.bPct == null ? '–' : t.bPct + '%') + ' · C ' + (t.cPct == null ? '–' : t.cPct + '%') + '</div>' : '<div class="v">⏳ ยังไม่ทำ</div><div class="small muted">รอลูกทำชุดวันนี้</div>') + '</div>';
+    h += '<div class="card kpi"><div class="muted">วันนี้</div>' + (t ? '<div class="v">✅ ทำแล้ว</div><div class="small">' + (String(t.pass).indexOf('ผ่าน') === 0 ? '<span class="badge b-green">ผ่านการประเมินสัปดาห์</span> ' : t.pass === 'ไม่ผ่าน' ? '<span class="badge b-yellow">ยังไม่ผ่านการประเมิน</span> ' : '') + 'A ' + (t.aPct == null ? '–' : t.aPct + '%') + ' · B ' + (t.bPct == null ? '–' : t.bPct + '%') + ' · C ' + (t.cPct == null ? '–' : t.cPct + '%') + '</div>' : '<div class="v">⏳ ยังไม่ทำ</div><div class="small muted">รอลูกทำชุดวันนี้</div>') + '</div>';
     h += '<div class="card kpi"><div class="muted">ทำติดต่อกัน</div><div class="v">🔥 ' + k.streak + ' วัน</div><div class="small muted">ทั้งหมด ' + k.sessions + ' ครั้ง</div></div>';
-    h += '<div class="card kpi"><div class="muted">เดือนนี้</div><div class="v">' + m.days + ' วัน</div><div class="small muted">' + (m.dailyCount ? 'ผ่านส่วน A ' + m.passN + '/' + m.dailyCount + ' ครั้ง · แม่นยำ A เฉลี่ย ' + m.avgA + '%' : 'ยังไม่มีชุดประจำวัน') + '</div></div>';
+    h += '<div class="card kpi"><div class="muted">เดือนนี้</div><div class="v">' + m.days + ' วัน</div><div class="small muted">' + (m.dailyCount ? m.sets + ' ชุด · ผ่านชุดประเมิน ' + m.passN + '/' + m.assessCount + ' สัปดาห์ · แม่นยำ A เฉลี่ย ' + m.avgA + '%' : 'ยังไม่มีชุดประจำวัน') + '</div></div>';
     h += '<div class="card kpi"><div class="muted">รอทบทวน</div><div class="v">♻ ' + k.pendingReviews + '</div><div class="small muted">ครบกำหนดแล้ว ' + k.dueReviews + ' ข้อ</div></div></div>';
     if (D.alerts.length) h += '<div class="card"><h2>ข้อควรสนใจ</h2>' + D.alerts.map(function (a) { return '<div class="alert al-' + a.level + '">' + ({ warn: '⚠️', info: 'ℹ️', good: '🌟' }[a.level]) + '<div>' + esc(a.text) + '</div></div>'; }).join('') + '</div>';
-    h += '<div class="card"><h2>ขั้นปัจจุบันของแต่ละทักษะ</h2>' + skillBars() + (D.placement.done ? '' : '<p class="small muted">ขั้นเริ่มต้นจะกำหนดหลังแบบวัดระดับครบ ' + D.placement.of + ' วัน (ตอนนี้ ' + D.placement.days + ')</p>') + '</div>';
+    h += '<div class="card"><h2>' + esc(D.rotation.label) + '</h2>' + skillBars() + (D.placement.done ? '' : '<p class="small muted">รอบเริ่มต้นจะกำหนดหลังแบบวัดระดับ 5 วันแรกเสร็จ</p>') + '</div>';
     var s = D.series, last = Math.max(0, s.dates.length - 14), sl = function (a) { return a.slice(last); };
     h += '<div class="cols"><div class="card"><h2>ปฏิทินการฝึก</h2>' + calendar(D.calendar, true) + '</div><div class="card"><h2>แม่นยำรอบแรก (14 ครั้งล่าสุด)</h2>' +
       lineChart(sl(s.dates), [{ name: 'A คิดเลขเร็ว', color: COLORS.a, vals: sl(s.a) }, { name: 'B สังเกต', color: COLORS.b, vals: sl(s.b) }, { name: 'C วิเคราะห์', color: COLORS.c, vals: sl(s.c) }], { refs: [{ v: D.thresholds.yellow, color: 'var(--yellow)' }, { v: D.thresholds.green, color: 'var(--green)' }], unit: '%', label: 'ความแม่นยำรอบแรก', note: 'เส้นประ = เกณฑ์ 🟡/🟢' }) + '</div></div>';
     return h;
   }
   function progress() {
-    var s = D.series, maxStep = Math.max.apply(null, D.skills.map(function (k) { return k.total; }));
+    var s = D.series, maxStep = Math.max(2, Math.max.apply(null, [].concat.apply([], Object.keys(s.rounds).map(function (k) { return s.rounds[k].filter(function (v) { return v != null; }); }))));
     var ratioMax = Math.max(200, Math.min(400, Math.ceil(Math.max.apply(null, s.ratio.filter(function (v) { return v != null; }).concat([100])) / 50) * 50));
     var h = '<div class="card"><h2>ความแม่นยำรอบแรก (% ถูก) แยกตามส่วน</h2>' +
       lineChart(s.dates, [{ name: 'A คิดเลขเร็ว', color: COLORS.a, vals: s.a }, { name: 'B การสังเกต', color: COLORS.b, vals: s.b }, { name: 'C คิดวิเคราะห์', color: COLORS.c, vals: s.c }], { refs: [{ v: D.thresholds.yellow, color: 'var(--yellow)' }, { v: D.thresholds.green, color: 'var(--green)' }], unit: '%', note: 'เส้นประ = เกณฑ์ 🟡/🟢' }) + '</div>';
     h += '<div class="card"><h2>ส่วน A: เวลารวม ÷ เวลาเป้าหมาย</h2><p class="small muted">ต่ำกว่าเส้น 100% = ทันเวลา (นับเฉพาะชุดประจำวัน)</p>' +
       lineChart(s.dates, [{ name: 'เวลา ÷ เป้า', color: '#d97706', vals: s.ratio }], { max: ratioMax, ticks: [0, ratioMax / 2, ratioMax], refs: [{ v: 100, color: 'var(--green)' }], unit: '%' }) + '</div>';
-    h += '<div class="card"><h2>ขั้นของแต่ละทักษะตามเวลา</h2>' +
-      lineChart(s.dates, Object.keys(s.steps).map(function (k) { return { name: SKILL[k], color: COLORS[k], vals: s.steps[k] }; }), { max: maxStep, ticks: [0, 3, 6, 9, 12, 15].filter(function (v) { return v <= maxStep; }), label: 'ขั้นของแต่ละทักษะ' }) + '</div>';
+    h += '<div class="card"><h2>รอบของแต่ละหัวข้อตามเวลา</h2>' +
+      lineChart(s.dates, Object.keys(s.rounds).map(function (k) { return { name: D.topics.filter(function (t) { return t.topic === k; })[0].name, color: COLORS[k] || '#2563eb', vals: s.rounds[k] }; }), { max: maxStep, ticks: Array.apply(null, Array(maxStep + 1)).map(function (_, i) { return i; }), label: 'รอบของแต่ละหัวข้อ' }) + '</div>' +
+      '<div class="card scroll"><h2>ผลชุดประเมินตามหัวข้อ (เทียบรอบ 1 กับรอบ 2)</h2>' + trendBlock() + '</div>';
     return h + '<div class="card"><h2>ปฏิทินการฝึก 6 สัปดาห์</h2>' + calendar(D.calendar, true) + '</div>';
   }
   function deltaCell(d) { return d ? '<span class="d-' + d.cls + '">' + esc(d.text) + '</span>' : '–'; }
@@ -214,7 +225,7 @@
     if (!D.history.length) return h + '<p class="muted">ยังไม่มีประวัติ</p></div>';
     h += '<table><tr><th>วันที่</th><th>ประเภท</th><th>ส่วน A</th><th class="c">ผล A</th><th class="c">A</th><th class="c">B</th><th class="c">C</th><th class="c">เวลา A</th><th class="c">รอบแก้</th></tr>';
     D.history.forEach(function (s) {
-      h += '<tr class="click" data-act="day" data-v="' + esc(s.date) + '"><td>' + esc(dmy(s.date)) + '</td><td>' + esc(s.mode) + '</td><td>' + esc((s.skillName || '') + ' ' + (s.stepLabel || '')) + '</td><td class="c">' + (s.pass === 'ผ่าน' ? '<span class="badge b-green">ผ่าน</span>' : s.pass === 'ไม่ผ่าน' ? '<span class="badge b-yellow">ไม่ผ่าน</span>' : '–') +
+      h += '<tr class="click" data-act="day" data-v="' + esc(s.date) + '"><td>' + esc(dmy(s.date)) + '</td><td>' + esc(s.mode) + '</td><td>' + esc(s.topic ? (s.topic + ' · รอบ ' + s.round + ' · ชุด ' + s.setNo + (s.slot === 2 ? ' (ชดเชย)' : '') + (s.repeat ? ' ซ้ำ' : '')) : ((s.skillName || '') + ' ' + (s.stepLabel || ''))) + '</td><td class="c">' + (s.pass === 'ผ่าน' ? '<span class="badge b-green">ผ่าน</span>' : s.pass === 'ผ่าน(ช้า)' ? '<span class="badge b-yellow">ผ่าน(ช้า)</span>' : s.pass === 'ไม่ผ่าน' ? '<span class="badge b-yellow">ไม่ผ่าน</span>' : '–') +
         '</td><td class="c">' + pctBadge(s.aPct) + '</td><td class="c">' + pctBadge(s.bPct) + '</td><td class="c">' + pctBadge(s.cPct) + '</td><td class="c">' + mmss(s.A.totalSec) + (s.A.target ? '<div class="small muted">/ ' + mmss(s.A.target) + '</div>' : '') + '</td><td class="c">' + s.A.rounds + '</td></tr>';
     });
     return h + '</table></div>';
@@ -231,8 +242,9 @@
     $('overlay').innerHTML = '<div class="modal-bg" data-act="close"><div class="modal" data-act="keep"><div class="spinner">กำลังโหลด…</div></div></div>';
     rpc('dash_getSession', PIN, date).then(function (r) {
       var h = '<div class="row"><h2 class="grow">' + esc(dmyFull(date)) + '</h2><button class="btn" data-act="close">ปิด</button></div><p class="muted small">ทั้งหมด ' + r.total + ' ข้อ · ผิดรอบแรก ' + r.wrong.length + ' ข้อ</p>';
-      h += r.wrong.length ? '<div class="scroll"><table><tr><th>ส่วน</th><th>ที่มา</th><th>โจทย์</th><th>ประเภท</th><th class="c">ครั้ง</th></tr>' + r.wrong.map(function (w) {
-        return '<tr><td>' + esc(w.section) + '</td><td>' + esc(w.label) + (w.review ? ' ♻' : '') + '</td><td class="q">' + esc(w.q) + '</td><td>' + esc(w.errType) + '</td><td class="c">' + w.tries + (w.revealed ? '<div class="small">ดูเฉลย</div>' : '') + '</td></tr>'; }).join('') + '</table></div>' : '<p>ไม่มีข้อที่ผิดรอบแรก 🎉</p>';
+      h += (r.sets || []).map(function (x) { return '<p class="small"><b>ชุด ' + x.slot + (x.slot === 2 ? ' (ชดเชย)' : '') + '</b> ' + esc(x.label) + ' · ' + esc(x.outcome || '') + ' · รวม ' + mmss(x.totalSec) + (x.x ? ' (เป้า ' + mmss(x.x) + ')' : '') + (x.pagesSec && x.pagesSec.length ? '<br>เวลาแต่ละหน้า: ' + x.pagesSec.map(function (v, i) { return (i + 1) + '=' + mmss(v); }).join(' · ') : '') + '</p>'; }).join('') +
+      (r.wrong.length ? '<div class="scroll"><table><tr><th>ส่วน</th><th>ที่มา</th><th>โจทย์</th><th>ประเภท</th><th class="c">ครั้ง</th></tr>' + r.wrong.map(function (w) {
+        return '<tr><td>' + esc(w.section) + '</td><td>' + esc(w.label) + (w.review ? ' ♻' : '') + '</td><td class="q">' + esc(w.q) + '</td><td>' + esc(w.errType) + '</td><td class="c">' + w.tries + (w.revealed ? '<div class="small">ดูเฉลย</div>' : '') + '</td></tr>'; }).join('') + '</table></div>' : '<p>ไม่มีข้อที่ผิดรอบแรก 🎉</p>');
       $('overlay').innerHTML = '<div class="modal-bg" data-act="close"><div class="modal" data-act="keep">' + h + '</div></div>';
     }).catch(function (e) { $('overlay').innerHTML = '<div class="modal-bg" data-act="close"><div class="modal">' + esc(e && e.message || e) + '</div></div>'; });
   }

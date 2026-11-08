@@ -9,7 +9,7 @@ const vm = require('vm');
 
 const DIR = path.join(__dirname, '..', 'apps-script');
 const PURE = ['Core.gs', 'Generators.gs', 'Templates.gs',
-  'BankSeed.gs', 'SetBuilder.gs', 'SelfTest.gs'];
+  'BankSeed.gs', 'Curriculum.gs', 'SetBuilder.gs', 'SelfTest.gs'];
 const ctx = vm.createContext({ console, Math, Date, JSON, Object, Array, String, Number, RegExp, Error });
 for (const f of PURE) {
   const p = path.join(DIR, f);
@@ -26,7 +26,7 @@ function loadInOrder(files) {
 const ALL_GS = fs.readdirSync(DIR).filter(f => f.endsWith('.gs'));
 const NOGAPI = ALL_GS.filter(f => !['Store.gs', 'Session.gs', 'Reports.gs', 'Code.gs'].includes(f));
 let orderFails = 0;
-const orders = [NOGAPI.slice().reverse(), NOGAPI.slice().sort(), NOGAPI.slice().sort().reverse(), ['SelfTest.gs', 'SetBuilder.gs', 'Templates.gs', 'BankSeed.gs', 'Generators.gs', 'Core.gs']];
+const orders = [NOGAPI.slice().reverse(), NOGAPI.slice().sort(), NOGAPI.slice().sort().reverse(), ['SelfTest.gs', 'SetBuilder.gs', 'Curriculum.gs', 'Templates.gs', 'BankSeed.gs', 'Generators.gs', 'Core.gs']];
 for (const o of orders) {
   try { const c = loadInOrder(o); if (vm.runInContext('STEPS.length', c) !== 50 || vm.runInContext('TEMPLATES.length', c) !== 68) orderFails++; }
   catch (e) { orderFails++; console.log('  ✗ โหลดตามลำดับ ' + o.join(',') + ' ไม่ได้: ' + e.message); }

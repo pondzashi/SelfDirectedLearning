@@ -32,21 +32,27 @@ function readProgressRows_(maxRows) {
 function dash_getBundle(pin) {
   dash_need_(pin);
   var cfg = getSettings(), st = getState(), L = readLevels(), today = todayYmd(), green = cfg.DASH_GREEN, yellow = cfg.DASH_YELLOW;
-  var list = dashDailyList(readDailyRows(400)), doneSet = {}, passMap = {};
-  list.forEach(function (d) { doneSet[d.date] = true; passMap[d.date] = d.pass; });
+  var list = dashDailyList(readDailyRows(500)), doneSet = {}, passMap = {};
+  list.forEach(function (d) {
+    doneSet[d.date] = true;
+    // วันที่มี 2 ชุด: ผลประเมินสัปดาห์ (ผ่าน/ไม่ผ่าน) ชนะชุดที่ไม่ได้ประเมิน
+    var cur = passMap[d.date];
+    if (cur === undefined || cur === '-' || (cur !== 'ผ่าน' && d.pass && d.pass !== '-')) passMap[d.date] = d.pass;
+  });
   var from30 = ymdAdd(today, -30), from14 = ymdAdd(today, -14);
-  var items = readItemRows(6000);
+  var items = readItemRowsSince(from30);
   var model = computeReportModel(readBench(), cfg.DELTA_THRESHOLD);
   var streak = dashStreak(doneSet, today, cfg.practiceDays), missed = dashMissed(doneSet, cfg.START_DATE, today, cfg.practiceDays);
   var due = getDueReviews(today), low = [];
   try { low = lowBankReport(); } catch (e) { low = []; }
   var todayRow = list.filter(function (d) { return d.date === today; })[0];
+  var rs = readRotation();
   var alerts = dashAlerts({ startDate: cfg.START_DATE, today: today, placement: { done: st.placementDone, days: st.placementDays.length, of: PLACEMENT_DAYS },
-    fails: L.fails, levels: L, maxRepeats: cfg.MAX_REPEATS, missed: missed, list: list, yellow: yellow, dueReviews: due.length, lowBank: low,
+    rot: { topic: rs.rot.topic, round: planRound(rs.rounds[rs.rot.topic]), setNo: rs.rot.setNo, repeat: rs.rot.repeat }, missed: missed, list: list, yellow: yellow, dueReviews: due.length, lowBank: low,
     streak: streak, todayDone: !!todayRow, todayPass: todayRow && todayRow.pass });
   var history = list.slice().reverse().slice(0, 60).map(function (d) {
     return { date: d.date, mode: d.mode, skillName: d.skillName, stepLabel: d.stepLabel, pass: d.pass, aPct: d.aPct, bPct: d.bPct, cPct: d.cPct, ratio: d.ratio,
-      A: d.A, B: d.B, C: d.C, totalMin: d.totalMin, note: d.note };
+      A: d.A, B: d.B, C: d.C, totalMin: d.totalMin, note: d.note, slot: d.slot, topic: d.topic, round: d.round, setNo: d.setNo, pagesSec: d.pagesSec, x: d.x, y: d.y, repeat: d.repeat };
   });
   var bank = [];
   try {
@@ -60,7 +66,8 @@ function dash_getBundle(pin) {
     placement: { done: st.placementDone, days: st.placementDays.length, of: PLACEMENT_DAYS }, tiers: L.tiers,
     kpi: { streak: streak, missed: missed, sessions: list.length, month: dashMonthStats(list, ymdMonth(today)), pendingReviews: countPendingReviews(), dueReviews: due.length,
       today: todayRow ? { pass: todayRow.pass, aPct: todayRow.aPct, bPct: todayRow.bPct, cPct: todayRow.cPct, mode: todayRow.mode } : null },
-    skills: dashSkillProgress(L), alerts: alerts,
+    topics: dashTopicProgress(rs), rotation: { topic: rs.rot.topic, topicName: TOPIC_NAMES[rs.rot.topic], round: planRound(rs.rounds[rs.rot.topic]), setNo: rs.rot.setNo, repeat: rs.rot.repeat, weekNo: rs.rot.weekNo,
+      label: rotLabel(rs.rot.topic, planRound(rs.rounds[rs.rot.topic]), rs.rot.setNo, rs.rot.repeat) }, trend: dashTopicTrend(list), alerts: alerts,
     calendar: dashCalendar(passMap, today, cfg.START_DATE, cfg.practiceDays, 6),
     series: dashSeries(readProgressRows_(200)),
     report: model, radar: dashRadar(model),
@@ -74,10 +81,11 @@ function dash_getBundle(pin) {
 function dash_getSession(pin, date) {
   dash_need_(pin);
   date = String(date || '');
-  var rows = readItemRows(6000).filter(function (r) { return String(r[0]) === date; });
+  var rows = readItemRowsSince(date).filter(function (r) { return String(r[0]) === date; });
+  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length }; });
   var secName = { A: 'คิดเลขเร็ว', B: 'การสังเกต', C: 'คิดวิเคราะห์' };
   return {
-    date: date, total: rows.length,
+    date: date, total: rows.length, sets: sets,
     wrong: rows.filter(function (r) { return Number(r[7]) !== 1; }).map(function (r) {
       return { section: secName[r[2]] || String(r[2]), cat: CAT_NAMES[r[3]] || String(r[3]), label: dashTagLabel(r[4]), q: String(r[16] || ''), errType: String(r[11] || ''), tries: Number(r[8]) || 1, revealed: Number(r[9]) === 1, review: Number(r[12]) === 1 };
     })

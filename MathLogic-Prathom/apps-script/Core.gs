@@ -96,6 +96,7 @@ function parseUser(s) {
  * - dec: เทียบค่า (0.50 = 0.5)
  * - frac: ต้องเป็นรูปอย่างต่ำ (2/4 ถือว่ายังไม่ถูก) ส่วนของจำนวนคละต้องน้อยกว่าตัวส่วน
  *         item.form = 'mixed' บังคับตอบเป็นจำนวนคละ, 'improper' บังคับตอบเป็นเศษเกิน
+ *         item.noReduce = true รับเศษส่วนที่ยังไม่อย่างต่ำ (เช่น อ่านเศษส่วนจากรูป 4/10)
  * - divrem: "ผลหาร|เศษ"
  * - choice: หมายเลขตัวเลือก (เริ่มที่ 1)
  */
@@ -115,7 +116,7 @@ function checkAnswer(item, userStr) {
   if (t === 'dec') return u.kind === 'dec' || u.kind === 'int';
   if (t === 'frac') {
     if (u.kind === 'dec') return false;
-    if (u.kind === 'frac' && (u.den < 2 || gcd(u.num, u.den) !== 1)) return false;
+    if (u.kind === 'frac' && (u.den < 2 || (!item.noReduce && gcd(u.num, u.den) !== 1))) return false;
     if (u.kind === 'mixed' && (u.num < 1 || u.num >= u.den || gcd(u.num, u.den) !== 1)) return false;
     if (item.form === 'mixed') return u.kind === 'mixed' || u.kind === 'int' || (u.kind === 'frac' && u.num < u.den);
     if (item.form === 'improper') return u.kind === 'frac' || u.kind === 'int';

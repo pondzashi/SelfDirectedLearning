@@ -40,7 +40,7 @@ function genTpl(cat, grp, tier, ctx, local, flags) {
   var ex = {}, k;
   for (k in (ctx.recentTpl || {})) ex[k] = 1;
   for (k in local) ex[k] = 1;
-  var id = pickTemplate(cat, grp, tier, ex);
+  var id = pickTemplate(cat, grp, tier, ex, ctx.topic ? topicPrefer(ctx.topic) : null);
   local[id] = 1;
   return flag(uniqueItem(function () { return buildTemplate(id, tier); }, ctx), flags || {});
 }
@@ -71,8 +71,9 @@ function pickFixed(ctx, cats, tier, flags, exceptCode) {
 
 /** สร้างข้อทบทวนจากรายการที่ถึงกำหนด (ตัวเลขใหม่ แนวคิดเดิม) */
 function regenReview(rv, ctx, local) {
-  var parts = String(rv.key).split(':'), kind = parts[0], id = parts[1], it = null, fl = { review: true, reviewId: rv.id };
-  if (kind === 'GEN' && STEP_BY_ID[id]) it = flag(uniqueItem(function () { return genStep(id); }, ctx), fl);
+  var km = /^(GEN|TPL|FIX|PG):(.+)$/.exec(String(rv.key)) || [], kind = km[1], id = km[2], it = null, fl = { review: true, reviewId: rv.id };
+  if (kind === 'PG' && pageKind(id)) it = flag(uniqueItem(function () { return oneOfKind(id, rv.tier || 1); }, ctx), fl);
+  else if (kind === 'GEN' && STEP_BY_ID[id]) it = flag(uniqueItem(function () { return genStep(id); }, ctx), fl);
   else if (kind === 'TPL' && TPL_BY_ID[id]) it = flag(uniqueItem(function () { return buildTemplate(id, rv.tier || 2); }, ctx), fl);
   else if (kind === 'FIX') {
     var row = fixedMap(ctx)[id];
@@ -107,12 +108,15 @@ function reviewIdsOf(sections) {
 
 /* ---------------- ชุดประจำวัน ---------------- */
 function buildDailySet(ctx) {
-  var L = ctx.levels, T3 = L.tiers, skill = ctx.skill, st = stepOf(skill, L[skill]), local = {};
-  var items = [], i;
-  for (i = 0; i < st.n; i++) items.push(flag(uniqueItem(function () { return genStep(st.id); }, ctx), { main: true }));
+  var T3 = ctx.levels.tiers, rot = ctx.rot, topic = rot.topic, round = planRound(ctx.rounds[topic]), setNo = rot.setNo, local = {};
+  ctx.topic = topic;
+  var b = buildASetItems(topic, round, setNo, ctx);
   var revA = takeReviews(ctx, SKILLS, MAX_REVIEW.A, local);
-  var A = mkSection('A', 'คิดเลขเร็ว', SKILL_NAMES[skill] + ' ขั้น ' + st.no + ': ' + st.name, 'drill', items.concat(revA),
-    { mainCount: items.length, targetSec: st.n * st.spp, graded: true, stepId: st.id, skill: skill, stepNo: st.no });
+  var xSec = Math.round(b.xSec * (ctx.targetMult || 1)), ySec = Math.round(xSec * (ctx.yFactor || 1.5)), assess = setNo === ROT_SETS;
+  var pages = b.pages.slice();
+  if (revA.length) pages.push({ n: revA.length, start: b.items.length, kind: 'review', label: 'ทบทวนข้อที่เคยพลาด', title: 'ทบทวนข้อที่เคยพลาด (ไม่นับในการประเมิน)', lvl: 0, pattern: false, observe: null });
+  var A = mkSection('A', 'คิดเลขเร็ว', rotLabel(topic, round, setNo, rot.repeat) + ' · ' + SET_KIND_LABEL[setNo], 'drill', b.items.concat(revA),
+    { mainCount: b.items.length, pages: pages, targetSec: xSec, graded: assess, assessment: assess, topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, weekNo: rot.weekNo, xSec: xSec, ySec: ySec, skill: TOPIC_CAT[topic] });
 
   // B การสังเกต
   var bSlots = ['seq', 'seq', 'vis', 'odd', 'err', 'FIX'];
@@ -138,7 +142,7 @@ function buildDailySet(ctx) {
   var C = mkSection('C', 'คิดวิเคราะห์', 'โจทย์หลายขั้นตอน ตาราง/แผนภูมิ ปริศนาตรรกะ', 'plain', cItems, { recSec: 540, graded: false });
   var secs = [A, B, C];
   return { mode: 'daily', title: 'ชุดฝึกประจำวัน', sections: secs, reviewIds: reviewIdsOf(secs),
-    meta: { skill: skill, stepId: st.id, stepNo: st.no, stepName: st.name } };
+    meta: { topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, assessment: assess, xSec: xSec, ySec: ySec } };
 }
 function shuffleKeepReviewLast(arr) {
   var a = arr.filter(function (x) { return !x.review; }), r = arr.filter(function (x) { return x.review; });

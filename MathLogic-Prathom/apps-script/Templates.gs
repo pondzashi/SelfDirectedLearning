@@ -23,9 +23,12 @@ function buildTemplate(id, tier) {
   return it;
 }
 /** เลือกแม่แบบที่รองรับระดับ tier ในหมวด cat (กลุ่ม grp ถ้าระบุ) โดยเลี่ยง exclude */
-function pickTemplate(cat, grp, tier, exclude) {
+function pickTemplate(cat, grp, tier, exclude, prefer) {
   var all = TEMPLATES.filter(function (t) { return t.cat === cat && (!grp || t.grp === grp) && t.min <= tier && tier <= t.max; });
   var fresh = all.filter(function (t) { return !exclude || !exclude[t.id]; });
+  // prefer = {รหัสแม่แบบ: 1} ที่สอดคล้องกับหัวข้อประจำสัปดาห์: เลือกจากกลุ่มนี้ก่อน (เฉพาะที่ยังไม่ออกซ้ำ) ถ้าไม่มีให้สุ่มรวม
+  var pf = prefer ? fresh.filter(function (t) { return prefer[t.id]; }) : [];
+  if (pf.length) return pick(pf).id;
   return pick(fresh.length ? fresh : all).id;
 }
 

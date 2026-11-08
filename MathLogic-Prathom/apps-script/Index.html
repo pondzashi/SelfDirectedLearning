@@ -97,6 +97,9 @@
   table.sum { width: 100%; border-collapse: collapse; font-size: 19px; }
   table.sum td, table.sum th { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: center; }
   table.sum td:first-child, table.sum th:first-child { text-align: left; }
+  .hist { text-align: left; margin: 10px 0 0; padding: 8px 14px; background: var(--card); border: 1px dashed var(--line); border-radius: 14px; font-size: 20px; line-height: 1.6; color: var(--muted); }
+  .hist small { display: block; font-size: 13px; }
+  .hist b { color: var(--brand); }
   .pill { display: inline-block; padding: 4px 14px; border-radius: 999px; font-weight: 700; font-size: 18px; }
   .pill.ok { background: var(--ok-bg); color: var(--ok); } .pill.no { background: var(--warn-bg); color: var(--warn); }
   .spin { width: 60px; height: 60px; border: 6px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: sp 1s linear infinite; margin: 0 auto 16px; }
@@ -145,7 +148,24 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function label() { return NAME ? 'น้อง' + NAME : (SET && SET.child) || 'น้อง'; }
   function cleanName(v) { return String(v || '').replace(/[<>&"']/g, '').replace(/^\s*น้อง\s*/, '').trim().slice(0, 20); }
-  function key() { return 'sdl_run_' + (SET ? SET.date : ''); }
+  function key() { return 'sdl_run_' + (SET ? SET.date : '') + '_' + (SET && SET.slot === 2 ? 2 : 1); }
+  function hasPages(s) { return s.kind === 'drill' && s.pages && s.pages.length; }
+  function pageIndexOf(s, idx) { var k = 0; s.pages.forEach(function (pg, j) { if (idx >= pg.start) k = j; }); return k; }
+  function mainPages(s) { return s.pages.filter(function (pg) { return pg.kind !== 'review'; }); }
+  function elapsed() { return (Date.now() - SEC.start) / 1000 - (SEC.paused || 0); }
+  function finishPage(s, k) { if (SEC.pgIdx === k && SEC.pgSecs[k] == null) SEC.pgSecs[k] = Math.max(0, (Date.now() - SEC.pgStart) / 1000); }
+  function histLine(it) {
+    if (it.type === 'choice') return '';
+    var a = String(it.ans); if (it.type === 'divrem') { var pr = a.split('|'); a = pr[0] + ' เศษ ' + pr[1]; }
+    var q = String(it.q), t = q.indexOf('?') >= 0 ? q.replace('?', '[[A]]') : q + ' [[A]]';
+    return '<div>' + rich(t).replace('[[A]]', '<b>' + rich(it.type === 'frac' ? '{' + a + '}' : a) + '</b>') + '</div>';
+  }
+  function histStrip(s, idx) {
+    var pg = s.pages[pageIndexOf(s, idx)];
+    if (!pg.pattern || SEC.stage !== 'first' || idx === pg.start) return '';
+    var out = []; for (var j = Math.max(pg.start, idx - 3); j < idx; j++) out.push(histLine(s.items[j]));
+    return '<div class="hist"><small>ข้อที่ผ่านมา (ดูแบบรูปแล้วหาเคล็ดลับ)</small>' + out.join('') + '</div>';
+  }
   function save() { try { localStorage.setItem(key(), JSON.stringify(RUN)); } catch (e) {} }
   function setSig() { return SET.sections.map(function (s) { return s.items.map(function (i) { return i.sig || i.key; }).join(','); }).join('|').length + ':' + SET.sections[0].items.length + ':' + (SET.sections[0].items[0].sig || ''); }
 
@@ -173,7 +193,18 @@
   function doneScreen(s) {
     var sm = s.summary || {};
     var rows = (sm.sections || []).map(function (x) { return '<tr><td>' + esc(x.id + ' ' + x.name) + '</td><td>' + x.right + '/' + x.total + '</td></tr>'; }).join('');
-    show('<div class="center"><div class="big-emoji">🎉</div><h1>วันนี้ทำเสร็จแล้ว!</h1><p class="lead">เก่งมากเลย ' + esc(NAME ? 'น้อง' + NAME : (s.child || '')) + ' พรุ่งนี้มาเจอกันใหม่</p><div class="card"><table class="sum"><tr><th>ส่วน</th><th>ถูกรอบแรก</th></tr>' + rows + '</table></div></div>');
+    show('<div class="center"><div class="big-emoji">🎉</div><h1>วันนี้ทำเสร็จแล้ว!</h1><p class="lead">เก่งมากเลย ' + esc(NAME ? 'น้อง' + NAME : (s.child || '')) + ' พรุ่งนี้มาเจอกันใหม่</p><div class="card"><table class="sum"><tr><th>ส่วน</th><th>ถูกรอบแรก</th></tr>' + rows + '</table></div>' + catchupCard(s.catchup) + '</div>');
+  wireCatchup();
+  }
+  function catchupCard(cu) {
+    return cu && cu.available ? '<div class="card"><p>วันนี้ยังทำเพิ่มได้อีก 1 ชุด (ไม่บังคับ) เผื่อวันก่อนหน้าทำไม่ทัน — สัปดาห์นี้เหลืออีก ' + cu.remaining + ' ชุด</p><button class="btn alt" id="cu">ทำชุดชดเชย (ไม่บังคับ)</button></div>' : '';
+  }
+  function wireCatchup() {
+    var b = document.getElementById('cu'); if (!b) return;
+    b.onclick = function () {
+      show('<div class="center"><div class="spin"></div><p class="lead">กำลังเตรียมชุดชดเชย...</p></div>');
+      gs('getCatchupSet').then(function (set) { if (set.status === 'ready') { SET = set; start(); } else messageScreen(set); }).catch(function (e) { messageScreen({ status: 'error', message: String(e && e.message || e) }); });
+    };
   }
 
   function start() {
@@ -211,7 +242,7 @@
     var idx = RUN.done.length;
     if (idx >= SET.sections.length) return finish();
     var s = SET.sections[idx];
-    SEC = RUN.sec = { i: idx, stage: 'intro', start: 0, firstSec: 0, mainFirstSec: null, fixStart: 0, fixSec: 0, round: 0, queue: [], qpos: 0, pos: 0,
+    SEC = RUN.sec = { i: idx, stage: 'intro', start: 0, paused: 0, pgIdx: -1, pgStart: 0, pgSecs: [], obsStart: 0, obsPage: -1, firstSec: 0, mainFirstSec: null, fixStart: 0, fixSec: 0, round: 0, queue: [], qpos: 0, pos: 0,
       res: s.items.map(function () { return { ok1: false, tries: 0, revealed: false, sec: 0, errType: '', done: false }; }) };
     save();
     sectionIntro();
@@ -219,15 +250,20 @@
   function curSec() { return SET.sections[SEC.i]; }
   function sectionIntro() {
     var s = curSec(), isDrill = s.kind === 'drill', info = '';
-    if (isDrill && s.graded) info = '<div class="rules card"><b>กติกา:</b><br>• จับเวลาจริง เป้าหมาย <b>' + mmss(s.targetSec) + '</b> นาที<br>• ข้อที่ผิดต้องแก้จนถูก (ไม่เฉลยให้ทันที)<br>• ถ้าถูกครบและทันเวลา พรุ่งนี้ได้ขั้นต่อไป</div>';
+    if (isDrill && s.topic) {
+      var np = mainPages(s).length, ex = s.assessment ? '<br>• <b>ชุดที่ 6 เป็นชุดประเมินของสัปดาห์:</b> ถ้าแก้จนถูกทุกข้อและเสร็จภายใน <b>' + mmss(s.xSec) + '</b> นาที จะขึ้นรอบใหม่ (ช้ากว่านี้นิดหน่อยก็ผ่าน แต่ไม่เกิน ' + mmss(s.ySec) + ' นาที)' : '';
+      info = '<div class="rules card"><b>กติกา:</b><br>• ' + np + ' หน้า หน้าละ 10 ข้อ ระบบจับเวลาแต่ละหน้า เป้าหมายรวม <b>' + mmss(s.targetSec) + '</b> นาที<br>• ข้อที่ผิดต้องแก้จนถูก (ไม่เฉลยให้ทันที)' + (s.items.some(function (i) { return i.review; }) ? '<br>• ท้ายชุดมีข้อทบทวนที่เคยพลาด (ไม่นับในการประเมิน)' : '') + ex + '</div>';
+    }
+    else if (isDrill && s.graded) info = '<div class="rules card"><b>กติกา:</b><br>• จับเวลาจริง เป้าหมาย <b>' + mmss(s.targetSec) + '</b> นาที<br>• ข้อที่ผิดต้องแก้จนถูก (ไม่เฉลยให้ทันที)</div>';
     else if (isDrill) info = '<div class="rules card">ข้อสอบเรียงจากง่ายไปยาก ทำเท่าที่ทำได้ ไม่ต้องเครียด ระบบแค่ใช้ดูว่าควรเริ่มที่ขั้นไหน<br>เวลาอ้างอิง <b>' + mmss(s.targetSec) + '</b> นาที</div>';
     else info = '<div class="rules card">ไม่ต้องรีบ คิดให้รอบคอบ ใช้กระดาษทดได้<br>เวลาแนะนำ <b>' + mmss(s.recSec) + '</b> นาที (เวลานี้ไม่มีผลต่อการผ่านหรือไม่ผ่าน)</div>';
-    show('<div class="center"><div class="chips"><span class="chip">ส่วน ' + esc(s.id) + ' จาก ' + SET.sections.length + '</span></div><h1>' + esc(s.name) + '</h1><p class="lead">' + esc(s.sub || '') + ' · ' + s.items.length + ' ข้อ</p>' + info + '<button class="btn" id="go">พร้อมแล้ว เริ่ม!</button></div>');
-    document.getElementById('go').onclick = function () { SEC.stage = 'first'; SEC.start = Date.now(); SEC.pos = 0; save(); renderItem(); };
+    show('<div class="center"><div class="chips"><span class="chip">ส่วน ' + esc(s.id) + ' จาก ' + SET.sections.length + '</span></div><h1>' + esc(s.name) + '</h1><p class="lead">' + esc(s.sub || '') + ' · ' + (s.mainCount && s.topic ? s.mainCount : s.items.length) + ' ข้อ</p>' + info + '<button class="btn" id="go">พร้อมแล้ว เริ่ม!</button></div>');
+    document.getElementById('go').onclick = function () { SEC.stage = 'first'; SEC.start = Date.now(); SEC.paused = 0; SEC.pos = 0; save(); renderItem(); };
   }
   function resumeSection() {
     if (SEC.stage === 'intro') return sectionIntro();
     if (SEC.stage === 'fixintro') return fixIntro();
+    if (SEC.stage === 'observe') { SEC.obsStart = Date.now(); return observeScreen(SEC.obsPage); }
     renderItem();
   }
 
@@ -239,7 +275,14 @@
     var fix = SEC.stage === 'fix', isChoice = it.type === 'choice', isDiv = it.type === 'divrem';
     var shouldReveal = fix && r.tries >= 3;
     if (shouldReveal) r.revealed = true;
-    var n = s.items.length, prog = fix ? ('แก้ข้อที่ ' + (SEC.qpos + 1) + '/' + SEC.queue.length + ' · รอบที่ ' + SEC.round) : ('ข้อ ' + (SEC.pos + 1) + '/' + n);
+    var n = s.items.length, prog = fix ? ('แก้ข้อที่ ' + (SEC.qpos + 1) + '/' + SEC.queue.length + ' · รอบที่ ' + SEC.round) : ('ข้อ ' + (SEC.pos + 1) + '/' + n), pgTag = '', strip = '';
+    if (hasPages(s) && !fix) {
+      var pk = pageIndexOf(s, idx), pg = s.pages[pk], mp = mainPages(s).length;
+      if (SEC.pgIdx !== pk) { SEC.pgIdx = pk; SEC.pgStart = Date.now(); }
+      prog = pg.kind === 'review' ? ('ทบทวน · ข้อ ' + (idx - pg.start + 1) + '/' + pg.n) : ('หน้า ' + (pk + 1) + '/' + mp + ' · ข้อ ' + (idx - pg.start + 1) + '/' + pg.n);
+      if (pg.pattern) pgTag = '<div class="tag">💡 ' + esc(pg.title) + '</div>';
+      strip = histStrip(s, idx);
+    }
     var pct = fix ? (SEC.qpos / Math.max(1, SEC.queue.length)) : (SEC.pos / n);
     var dataHtml = '';
     if (it.data) {
@@ -282,8 +325,8 @@
     var tgt = (isA && SEC.stage === 'first') ? s.targetSec : 0;
     show('<div class="top"><div><div class="sec">' + esc(s.id + ' ' + s.name) + '</div><div class="prog">' + esc(prog) + '</div></div><div class="timer" id="timer">0:00<small id="tsub"></small></div></div>' +
       '<div class="bar"><i style="width:' + Math.round(pct * 100) + '%"></i></div>' +
-      '<div class="stage"><div class="qcol"><div class="qbox" id="qbox">' + tag + (dataHtml || '') + '<div class="q' + (longQ ? ' long' : '') + '">' + qhtml + '</div>' + (isChoice ? '' : '') + '</div>' +
-      '<div class="msg" id="fb" style="margin-top:10px"></div>' + revealHtml + '</div><div class="acol">' + input + '</div></div>');
+      '<div class="stage"><div class="qcol"><div class="qbox" id="qbox">' + tag + pgTag + (dataHtml || '') + '<div class="q' + (longQ ? ' long' : '') + '">' + qhtml + '</div>' + (isChoice ? '' : '') + '</div>' +
+      strip + '<div class="msg" id="fb" style="margin-top:10px"></div>' + revealHtml + '</div><div class="acol">' + input + '</div></div>');
     wire(it);
     drawBoxes(it);
     startTimer();
@@ -360,7 +403,7 @@
       r.sec = sec; r.ok1 = ok;
       if (!ok) r.errType = classifyError(it, val, sec);
       streak = ok ? streak + 1 : 0;
-      if (s.kind === 'drill' && SEC.mainFirstSec == null && SEC.pos === (s.mainCount || s.items.length) - 1) SEC.mainFirstSec = (Date.now() - SEC.start) / 1000;
+      if (s.kind === 'drill' && SEC.mainFirstSec == null && SEC.pos === (s.mainCount || s.items.length) - 1) SEC.mainFirstSec = elapsed();
     } else if (ok) r.done = true;
     box.classList.add(ok ? 'ok' : 'bad');
     var m = fix ? (ok ? rnd(FIXOK) : rnd(FIXBAD)) : (ok ? (streak > 0 && streak % 5 === 0 ? 'ถูกติดกัน ' + streak + ' ข้อแล้ว 🔥' : rnd(OKMSG)) : rnd(BADMSG));
@@ -374,7 +417,13 @@
     var s = curSec();
     if (SEC.stage === 'first') {
       SEC.pos++;
-      if (s.kind === 'drill' && s.graded !== false && false) {}
+      if (hasPages(s)) {
+        var pk = pageIndexOf(s, SEC.pos - 1), pg = s.pages[pk];
+        if (SEC.pos >= pg.start + pg.n) {
+          finishPage(s, pk);
+          if (pg.pattern && pg.observe && SEC.pos < s.items.length) { SEC.stage = 'observe'; SEC.obsPage = pk; SEC.obsStart = Date.now(); stopTimer(); save(); return observeScreen(pk); }
+        }
+      }
       if (SEC.pos >= s.items.length) return endFirst(false);
       save(); return renderItem();
     }
@@ -388,7 +437,7 @@
   }
   function checkCap() {
     var s = curSec();
-    if (SEC && SEC.stage === 'first' && s.kind === 'drill' && SET.aMaxSec && (Date.now() - SEC.start) / 1000 > SET.aMaxSec && !locked) {
+    if (SEC && SEC.stage === 'first' && s.kind === 'drill' && SET.aMaxSec && elapsed() > SET.aMaxSec && !locked) {
       for (var i = SEC.pos; i < s.items.length; i++) { var r = SEC.res[i]; if (!r.tries) { r.ok1 = false; r.errType = 'หมดเวลา'; r.sec = SET.aMaxSec; } }
       if (SEC.mainFirstSec == null) SEC.mainFirstSec = SET.aMaxSec;
       endFirst(true);
@@ -397,11 +446,31 @@
   function endFirst(capped) {
     stopTimer();
     var s = curSec();
-    SEC.firstSec = (Date.now() - SEC.start) / 1000;
+    SEC.firstSec = elapsed();
+    if (hasPages(s) && SEC.pgIdx >= 0) finishPage(s, SEC.pgIdx);
     if (SEC.mainFirstSec == null) SEC.mainFirstSec = SEC.firstSec;
     SEC.queue = []; SEC.res.forEach(function (r, i) { if (!r.ok1) SEC.queue.push(i); });
     if (!SEC.queue.length) { SEC.round = 0; return sectionDone(); }
     SEC.stage = 'fixintro'; save(); fixIntro(capped);
+  }
+  function observeScreen(pk) {
+    var s = curSec(), ob = s.pages[pk].observe;
+    show('<div class="center"><div class="big-emoji">🔎</div><h1>สังเกตเห็นอะไร?</h1><p class="lead">' + rich(ob.q) + '</p><div class="choices lines" id="choices">' + ob.choices.map(function (c, k) {
+      return '<button class="choice" data-k="' + (k + 1) + '"><b>' + (k + 1) + '.</b> ' + rich(c) + '</button>';
+    }).join('') + '</div><p class="lead" style="font-size:16px">คำถามนี้ไม่นับคะแนน และไม่นับเวลา ตอบตามที่คิดได้เลย</p><div id="obsfb"></div></div>');
+    var done = false;
+    document.querySelectorAll('#choices .choice').forEach(function (b) {
+      b.onclick = function () {
+        if (done) return; done = true;
+        var k = b.getAttribute('data-k'), good = k === String(ob.ans);
+        document.querySelectorAll('#choices .choice').forEach(function (x) { x.classList.toggle('sel', x === b); });
+        document.getElementById('obsfb').innerHTML = '<div class="reveal">' + (good ? '✓ สังเกตเก่งมาก! ' : 'ลองดูอีกที: ') + '<b>เคล็ดลับ:</b> ' + rich(ob.explain || '') + '</div><button class="btn" id="go">ไปหน้าต่อไป →</button>';
+        document.getElementById('go').onclick = function () {
+          SEC.paused = (SEC.paused || 0) + Math.max(0, (Date.now() - SEC.obsStart) / 1000);
+          SEC.stage = 'first'; save(); renderItem();
+        };
+      };
+    });
   }
   function fixIntro(capped) {
     show('<div class="center"><div class="big-emoji">🔧</div><h1>มาแก้ข้อที่ยังไม่ถูกกัน</h1><p class="lead">' + (capped ? 'หมดเวลารอบแรกแล้ว ' : '') + 'มี ' + SEC.queue.length + ' ข้อที่ต้องลองใหม่ ระบบไม่เฉลยทันที ค่อย ๆ คิดนะ ถ้าติดจริง ๆ จะมีคำใบ้ให้</p><button class="btn" id="go">แก้เลย!</button></div>');
@@ -418,11 +487,19 @@
     var items = s.items.map(function (it, i) {
       var r = SEC.res[i];
       return { key: it.key, cat: it.cat, tag: it.tag, sig: it.sig, q: it.q, ok1: r.ok1, tries: r.tries || 1, revealed: r.revealed, sec: r.sec, errType: r.errType,
-        review: !!it.review, reviewId: it.reviewId || '', cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '' };
+        review: !!it.review, reviewId: it.reviewId || '', cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '', page: it.page || '' };
     });
     var first = s.kind === 'drill' ? (SEC.mainFirstSec != null ? SEC.mainFirstSec : SEC.firstSec) : SEC.firstSec;
-    return { id: s.id, name: s.name, kind: s.kind, skill: s.skill || '', items: items, firstSec: first, correctionSec: SEC.fixSec, totalSec: first + SEC.fixSec,
+    var out = { id: s.id, name: s.name, kind: s.kind, skill: s.skill || '', items: items, firstSec: first, correctionSec: SEC.fixSec, totalSec: first + SEC.fixSec,
       rounds: SEC.round ? SEC.round : 0, targetSec: s.targetSec || 0, recSec: s.recSec || 0, mainCount: s.mainCount || items.length };
+    if (hasPages(s) && s.topic) {
+      out.topic = s.topic; out.round = s.round; out.setNo = s.setNo; out.repeat = !!s.repeat; out.assessment = !!s.assessment; out.xSec = s.xSec; out.ySec = s.ySec;
+      out.pages = s.pages.map(function (pg, k) { return { pg: pg, k: k }; }).filter(function (o) { return o.pg.kind !== 'review'; }).map(function (o, j) {
+        var right = 0; for (var q = o.pg.start; q < o.pg.start + o.pg.n; q++) if (SEC.res[q].ok1) right++;
+        return { page: j + 1, sec: Math.round((SEC.pgSecs[o.k] || 0) * 10) / 10, right: right, n: o.pg.n };
+      });
+    }
+    return out;
   }
   function sectionDone() {
     stopTimer();
@@ -432,10 +509,11 @@
     var timeInfo = '';
     if (res.kind === 'drill' && res.targetSec) {
       var within = res.totalSec <= res.targetSec;
-      timeInfo = '<p class="lead">เวลารวม <b>' + mmss(res.totalSec) + '</b> / เป้าหมาย ' + mmss(res.targetSec) + (SET.mode === 'daily' ? (within ? ' ✓ ทันเวลา!' : ' — ยังไม่ทัน ลองใหม่พรุ่งนี้นะ') : '') + '</p>';
+      timeInfo = '<p class="lead">เวลารวม <b>' + mmss(res.totalSec) + '</b> / เป้าหมาย ' + mmss(res.targetSec) + (SET.mode === 'daily' ? (within ? ' ✓ ทันเวลา!' : (res.assessment ? ' — ช้ากว่าเป้านิดหน่อย' : '')) : '') + '</p>';
+      if (res.pages && res.pages.length) timeInfo += '<div class="card"><b>เวลาแต่ละหน้า</b><br>' + res.pages.map(function (pg) { return 'หน้า ' + pg.page + ': ' + mmss(pg.sec) + ' (ถูก ' + pg.right + '/' + pg.n + ')'; }).join(' · ') + '</div>';
     } else timeInfo = '<p class="lead">ใช้เวลา ' + mmss(res.totalSec) + ' นาที</p>';
     RUN.done.push(res); RUN.sec = null; SEC = null; save();
-    gs('submitSection', { date: SET.date, mode: SET.mode, section: res }).catch(function () {});
+    gs('submitSection', { date: SET.date, slot: SET.slot === 2 ? 2 : 1, mode: SET.mode, section: res }).catch(function () {});
     var last = RUN.done.length >= SET.sections.length;
     show('<div class="center"><div class="stars">' + stars + '</div><h1>จบส่วน ' + esc(res.id) + ' แล้ว!</h1><p class="lead">ถูกรอบแรก <b>' + right + '/' + n + '</b>' + (res.rounds ? ' · แก้ ' + res.rounds + ' รอบ' : ' · ไม่ต้องแก้เลย') + '</p>' + timeInfo + '<p class="lead">' + msg + '</p><button class="btn" id="go">' + (last ? 'ส่งผลและดูสรุป' : 'ส่วนต่อไป →') + '</button></div>');
     document.getElementById('go').onclick = nextSection;
@@ -443,13 +521,14 @@
 
   /* ---------------- จบชุด ---------------- */
   function finish() {
-    var payload = { childName: NAME, date: SET.date, mode: SET.mode, placementDay: SET.placementDay == null ? null : SET.placementDay, title: SET.title,
+    var payload = { childName: NAME, date: SET.date, slot: SET.slot === 2 ? 2 : 1, mode: SET.mode, placementDay: SET.placementDay == null ? null : SET.placementDay, title: SET.title,
       totalSec: RUN.done.reduce(function (s, x) { return s + x.totalSec; }, 0), sections: RUN.done };
     show('<div class="center"><div class="spin"></div><p class="lead">กำลังบันทึกผล...</p></div>');
     try { localStorage.setItem('sdl_pending', JSON.stringify(payload)); } catch (e) {}
     gs('submitSession', payload).then(function (r) {
       try { localStorage.removeItem('sdl_pending'); localStorage.removeItem(key()); } catch (e) {}
-      finalScreen(r.summary || {});
+      if (r && r.ok === false) { show('<div class="center"><div class="big-emoji">🙂</div><h2>บันทึกชุดนี้ไม่ได้</h2><p class="lead">' + esc(r.message || '') + '</p></div>'); return; }
+      finalScreen(r.summary || {}, SET);
     }).catch(function (e) {
       show('<div class="center"><div class="big-emoji">📶</div><h2>บันทึกผลไม่สำเร็จ</h2><p class="lead">ผลยังเก็บไว้ในเครื่องนี้ ตรวจสัญญาณอินเทอร์เน็ตแล้วกดลองใหม่</p><button class="btn" id="go">ลองใหม่</button></div>');
       document.getElementById('go').onclick = finish;
@@ -460,17 +539,25 @@
     if (!raw) return;
     gs('submitSession', JSON.parse(raw)).then(function () { try { localStorage.removeItem('sdl_pending'); } catch (e) {} }).catch(function () {});
   }
-  function finalScreen(sm) {
+  function finalScreen(sm, set) {
     var rows = (sm.sections || []).map(function (x) {
       return '<tr><td>' + esc(x.id + ' ' + x.name) + '</td><td>' + x.right + '/' + x.total + '</td><td>' + mmss(x.totalSec) + '</td><td>' + x.rounds + '</td></tr>';
     }).join('');
     var pass = '';
-    if (sm.drill) pass = '<p>' + (sm.drill.pass ? '<span class="pill ok">🎉 ผ่านขั้นนี้แล้ว!</span>' : '<span class="pill no">ยังไม่ผ่านขั้นนี้ — พรุ่งนี้ลองอีกครั้ง</span>') + '</p>';
+    if (sm.drill) {
+      var d = sm.drill;
+      if (!d.assessment) pass = '<p><span class="pill ok">ชุดที่ ' + d.setNo + '/6 ของสัปดาห์' + esc(d.topicName) + ' เสร็จแล้ว</span></p>';
+      else if (d.outcome === 'pass') pass = '<p><span class="pill ok">🎉 ผ่านการประเมิน! ' + esc(d.topicName) + 'ขึ้นรอบ ' + (d.round + 1) + '</span></p>';
+      else if (d.outcome === 'flag') pass = '<p><span class="pill ok">👍 ผ่านแล้ว! แต่ยังช้ากว่าเป้านิดหน่อย ฝึกให้เร็วขึ้นอีกนิด</span></p>';
+      else pass = '<p><span class="pill no">' + (d.event === 'moveon' ? 'ยังไม่ผ่าน — ไปหัวข้อถัดไปก่อน แล้วค่อยกลับมาใหม่' : 'ยังไม่ผ่าน — สัปดาห์หน้าลองหัวข้อนี้อีกครั้งนะ') + '</span></p>';
+      if (d.pages && d.pages.length) pass += '<div class="card"><b>เวลาแต่ละหน้า (ส่วน A)</b><br>' + d.pages.map(function (v, i) { return 'หน้า ' + (i + 1) + ': ' + mmss(v); }).join(' · ') + '</div>';
+    }
     var pl = '';
-    if (sm.placement) pl = '<div class="card"><b>ขั้นเริ่มต้นที่ระบบกำหนดให้:</b><br>' + Object.keys(sm.placement.starts).map(function (k) { var v = sm.placement.starts[k]; return '• ' + esc(({ addsub: 'บวกลบ', mul: 'คูณ', div: 'หาร', fracdec: 'เศษส่วนทศนิยม' })[k]) + ' ขั้น ' + v.no; }).join('<br>') + '</div>';
+    if (sm.placement) pl = '<div class="card"><b>ขั้นเริ่มต้นที่ระบบกำหนดให้:</b><br>' + Object.keys(sm.placement.starts).map(function (k) { var v = sm.placement.starts[k]; return '• ' + esc(({ addsub: 'บวกลบ', mul: 'คูณ', div: 'หาร', fracdec: 'เศษส่วนทศนิยม' })[k]) + ' ขั้น ' + v.no; }).join('<br>') + '<br><small>เริ่มสัปดาห์บวก รอบ ' + ((sm.placement.rounds || {}).add || 1) + '</small></div>';
     show('<div class="center"><div class="big-emoji">🏆</div><h1>เก่งมาก ' + esc(label()) + '!</h1><p class="lead">วันนี้ทำครบแล้ว ผลถูกส่งให้คุณพ่อคุณแม่เรียบร้อย</p>' + pass +
       '<div class="card"><table class="sum"><tr><th>ส่วน</th><th>ถูกรอบแรก</th><th>เวลา</th><th>รอบแก้</th></tr>' + rows + '</table></div>' + pl +
-      '<p class="lead">' + esc(sm.note || '') + '</p></div>');
+      '<p class="lead">' + esc(sm.note || '') + '</p>' + (set && set.mode === 'daily' && set.slot !== 2 && sm.drill && !sm.drill.assessment ? catchupCard({ available: true, remaining: 6 - sm.drill.setNo }) : '') + '</div>');
+    wireCatchup();
   }
 
   /* ---------------- นาฬิกา ---------------- */
@@ -482,7 +569,7 @@
       var fix = SEC.stage === 'fix', secs, sub = '', over = false;
       if (fix) { secs = (Date.now() - SEC.fixStart) / 1000; sub = 'เวลาแก้'; }
       else {
-        secs = (Date.now() - SEC.start) / 1000;
+        secs = elapsed();
         if (s.kind === 'drill' && s.targetSec) { sub = 'เป้า ' + mmss(s.targetSec); over = secs > s.targetSec; }
         else sub = 'แนะนำ ' + mmss(s.recSec || 0);
       }

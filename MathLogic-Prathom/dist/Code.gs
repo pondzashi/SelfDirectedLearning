@@ -99,6 +99,7 @@ function parseUser(s) {
  * - dec: เทียบค่า (0.50 = 0.5)
  * - frac: ต้องเป็นรูปอย่างต่ำ (2/4 ถือว่ายังไม่ถูก) ส่วนของจำนวนคละต้องน้อยกว่าตัวส่วน
  *         item.form = 'mixed' บังคับตอบเป็นจำนวนคละ, 'improper' บังคับตอบเป็นเศษเกิน
+ *         item.noReduce = true รับเศษส่วนที่ยังไม่อย่างต่ำ (เช่น อ่านเศษส่วนจากรูป 4/10)
  * - divrem: "ผลหาร|เศษ"
  * - choice: หมายเลขตัวเลือก (เริ่มที่ 1)
  */
@@ -118,7 +119,7 @@ function checkAnswer(item, userStr) {
   if (t === 'dec') return u.kind === 'dec' || u.kind === 'int';
   if (t === 'frac') {
     if (u.kind === 'dec') return false;
-    if (u.kind === 'frac' && (u.den < 2 || gcd(u.num, u.den) !== 1)) return false;
+    if (u.kind === 'frac' && (u.den < 2 || (!item.noReduce && gcd(u.num, u.den) !== 1))) return false;
     if (u.kind === 'mixed' && (u.num < 1 || u.num >= u.den || gcd(u.num, u.den) !== 1)) return false;
     if (item.form === 'mixed') return u.kind === 'mixed' || u.kind === 'int' || (u.kind === 'frac' && u.num < u.den);
     if (item.form === 'improper') return u.kind === 'frac' || u.kind === 'int';
@@ -659,9 +660,12 @@ function buildTemplate(id, tier) {
   return it;
 }
 /** เลือกแม่แบบที่รองรับระดับ tier ในหมวด cat (กลุ่ม grp ถ้าระบุ) โดยเลี่ยง exclude */
-function pickTemplate(cat, grp, tier, exclude) {
+function pickTemplate(cat, grp, tier, exclude, prefer) {
   var all = TEMPLATES.filter(function (t) { return t.cat === cat && (!grp || t.grp === grp) && t.min <= tier && tier <= t.max; });
   var fresh = all.filter(function (t) { return !exclude || !exclude[t.id]; });
+  // prefer = {รหัสแม่แบบ: 1} ที่สอดคล้องกับหัวข้อประจำสัปดาห์: เลือกจากกลุ่มนี้ก่อน (เฉพาะที่ยังไม่ออกซ้ำ) ถ้าไม่มีให้สุ่มรวม
+  var pf = prefer ? fresh.filter(function (t) { return prefer[t.id]; }) : [];
+  if (pf.length) return pick(pf).id;
   return pick(fresh.length ? fresh : all).id;
 }
 
@@ -1306,6 +1310,614 @@ function fixedToItem(row) {
   return it;
 }
 
+// ======================= Curriculum.gs =======================
+/**
+ * Curriculum.gs — หลักสูตรส่วน A แบบ "สัปดาห์ละเรื่อง" (บวก → ลบ → คูณ → หาร → เศษส่วน, หัวข้อละ 6 ชุด)
+ * ไม่เรียก API ของ Google (ทดสอบด้วย Node ได้) และไม่เรียกฟังก์ชันของไฟล์อื่นตอนโหลดไฟล์
+ *
+ * หน่วย: "ชนิดหน้า" (page kind) = โจทย์ 10 ข้อ
+ *   pat(v)  → หน้ารูปแบบ (ข้อเรียงเป็นแบบรูปให้เด็กสังเกตเอง + คำถามสังเกตไม่ให้คะแนนท้ายหน้า) มี nv แบบ
+ *   one(l)  → โจทย์สุ่ม 1 ข้อ ที่ระดับ l (0 ง่าย, 1 ใช้เทคนิค, 2 ยากขึ้น)
+ * แผน: ROUND_PLAN[หัวข้อ][รอบ] = {total: ข้อต่อชุด, sets: [6 ชุด × [[ชนิดหน้า, ระดับ, จำนวนหน้า, ตัวแปรเริ่มต้น]]]}
+ */
+var TOPICS = ['add', 'sub', 'mul', 'div', 'frac'];
+var TOPIC_NAMES = { add: 'บวก', sub: 'ลบ', mul: 'คูณ', div: 'หาร', frac: 'เศษส่วน' };
+var TOPIC_CAT = { add: 'addsub', sub: 'addsub', mul: 'mul', div: 'div', frac: 'fracdec' };
+var ROT_SETS = 6;
+var PAGE_SIZE = 10;
+var MAX_PLAN_ROUND = 3;
+var SET_KIND_LABEL = ['', 'ฝึกสังเกตรูปแบบ', 'ฝึกสังเกตรูปแบบ', 'ใช้เทคนิคกับโจทย์ที่ยากขึ้น', 'ใช้เทคนิคกับโจทย์ที่ยากขึ้น', 'ฝึกผสม', 'ประเมินผลประจำสัปดาห์'];
+
+var PAGE_KINDS = {};
+function PK(id, topic, label, spp, def) {
+  def.id = id; def.topic = topic; def.label = label; def.spp = spp; def.nv = def.nv || 0;
+  PAGE_KINDS[id] = def;
+}
+function pkRange(a, b) { var o = []; for (var i = a; i <= b; i++) o.push(i); return o; }
+function PI(q, ans, o) {
+  var it = { q: q, ans: String(ans), type: 'int' };
+  if (o) for (var k in o) it[k] = o[k];
+  return it;
+}
+/** คำถามสังเกต (ไม่ให้คะแนน): ตัวเลือกสลับตำแหน่งตาม seed */
+function obsQ(q, correct, wrongs, explain) {
+  var c = String(correct), ws = [];
+  wrongs.forEach(function (w) { w = String(w); if (w !== c && ws.indexOf(w) < 0) ws.push(w); });
+  var all = shuffle([c].concat(ws.slice(0, 3)));
+  return { q: q, choices: all, ans: String(all.indexOf(c) + 1), explain: explain || '' };
+}
+function stepItem(id) { var it = genStep(id); delete it.key; return it; }
+var TL = [2, 5, 10, 3, 4, 6, 7, 8, 9, 11, 12];
+
+/* ======================= บวก ======================= */
+PK('add.pairs10', 'add', 'บวกให้ครบสิบ', [3, 4, 5], {
+  nv: 4,
+  pat: function (v) {
+    var items, tot = v === 3 ? 20 : 10;
+    if (v === 0) items = pkRange(0, 9).map(function (a) { return PI(a + ' + ' + (10 - a) + ' =', 10); });
+    else if (v === 1) items = pkRange(0, 9).map(function (a) { return PI(a + ' + ? = 10', 10 - a); });
+    else if (v === 2) items = pkRange(0, 9).map(function (a) { return PI('? + ' + (10 - a) + ' = 10', a); });
+    else items = pkRange(10, 19).map(function (a) { return PI(a + ' + ' + (20 - a) + ' =', 20); });
+    return { items: items, observe: obsQ('สองจำนวนในทุกข้อบวกกันได้เท่าไรเสมอ?', tot, [tot - 5, tot + 5, tot + 1], 'ตัวหนึ่งเพิ่มขึ้น อีกตัวลดลง ผลรวมจึงเท่าเดิมคือ ' + tot) };
+  },
+  one: function (l) {
+    if (l === 0) { var a = ri(0, 10); return PI(a + ' + ' + (10 - a) + ' =', 10); }
+    var b = ri(11, 89);
+    return PI(b + ' + ' + (100 - b) + ' =', 100, { explain: 'ตัวหนึ่งบวกอีกตัวให้ครบ 100' });
+  }
+});
+PK('add.plus9', 'add', 'บวก 9 / บวก 8', [3, 4, 5], {
+  nv: 4,
+  pat: function (v) {
+    var items, ob;
+    if (v === 0) { items = pkRange(1, 10).map(function (x) { return PI(x + ' + 9 =', x + 9); }); ob = obsQ('บวก 9 เหมือนบวก 10 แล้วทำอย่างไรต่อ?', 'ลบ 1', ['บวก 1', 'ลบ 9', 'คูณ 10'], '+9 = +10 แล้วลบ 1'); }
+    else if (v === 1) { items = pkRange(0, 9).map(function (i) { var x = 11 + i * 10; return PI(x + ' + 9 =', x + 9); }); ob = obsQ('เลขหน่วยของคำตอบเป็นอย่างไรเมื่อเทียบกับเลขหน่วยของตัวตั้ง?', 'น้อยลง 1', ['มากขึ้น 1', 'เท่าเดิม', 'น้อยลง 9'], '+9 คือ +10 −1 หลักสิบเพิ่ม 1 หลักหน่วยลด 1'); }
+    else if (v === 2) { items = pkRange(1, 10).map(function (x) { return PI(x + ' + 8 =', x + 8); }); ob = obsQ('บวก 8 เหมือนบวก 10 แล้วลบเท่าไร?', 'ลบ 2', ['ลบ 1', 'ลบ 8', 'บวก 2'], '+8 = +10 แล้วลบ 2'); }
+    else { items = pkRange(11, 20).map(function (x) { return PI(x + ' + 9 =', x + 9); }); ob = null; }
+    return { items: items, observe: ob };
+  },
+  one: function (l) {
+    if (l <= 1) { var x = ri(11, 89), d = pick([9, 9, 8]); return PI(x + ' + ' + d + ' =', x + d, { explain: '+' + d + ' = +10 แล้วลบ ' + (10 - d) }); }
+    var y = ri(21, 79), e = pick([19, 29, 18]);
+    return PI(y + ' + ' + e + ' =', y + e, { explain: 'บวกเต็มสิบแล้วลบส่วนที่เกิน' });
+  }
+});
+PK('add.bridge10', 'add', 'บวกข้ามสิบ', [3, 4, 5], {
+  nv: 8,
+  pat: function (v) {
+    var a = 6 + (v % 4), items = pkRange(1, 10).map(function (b) { return PI(a + ' + ' + b + ' =', a + b); });
+    if (v >= 4) items.reverse();
+    return { items: items, observe: obsQ(a + ' + 5: เติมให้ครบ 10 ก่อน แล้วเหลืออีกเท่าไร?', a - 5, [5, 10 - a, a - 4], a + ' + 5 = ' + a + ' + ' + (10 - a) + ' + ' + (a - 5)) };
+  },
+  one: function (l) {
+    if (l <= 1) { var a = ri(6, 9), b = retry(function () { return ri(2, 9); }, function (b) { return a + b > 10; }); return PI(a + ' + ' + b + ' =', a + b, { explain: 'เติมให้ครบ 10 ก่อน แล้วบวกที่เหลือ' }); }
+    var x = retry(function () { return ri(14, 89); }, function (x) { return x % 10 >= 4; }), c = retry(function () { return ri(3, 9); }, function (c) { return x % 10 + c > 10; });
+    return PI(x + ' + ' + c + ' =', x + c, { explain: 'เติมให้ครบสิบก่อน แล้วบวกที่เหลือ' });
+  }
+});
+PK('add.bridge2d', 'add', 'บวกสองหลักข้ามสิบ', [4, 5, 7], {
+  nv: 8,
+  pat: function (v) {
+    var base = [37, 48, 59, 66, 75, 84, 29, 18][v % 8], u = base % 10, need = 10 - u, b2 = need + 3;
+    return { items: pkRange(1, 10).map(function (b) { return PI(base + ' + ' + b + ' =', base + b); }),
+      observe: obsQ(base + ' + ' + b2 + ': เติม ' + need + ' ให้ครบสิบก่อน แล้วเหลืออีกเท่าไร?', 3, [need, b2, 10], base + ' + ' + b2 + ' = ' + (base + need) + ' + 3') };
+  },
+  one: function (l) {
+    if (l <= 1) { var x = retry(function () { return ri(23, 89); }, function (x) { return x % 10 >= 3; }), c = retry(function () { return ri(3, 9); }, function (c) { return x % 10 + c > 10; }); return PI(x + ' + ' + c + ' =', x + c); }
+    var p = retry(function () { return [ri(20, 99), ri(20, 99)]; }, function (p) { return carries(p[0], p[1]) >= 1 && p[0] + p[1] > 100; });
+    return PI(p[0] + ' + ' + p[1] + ' =', p[0] + p[1], { traps: addTraps(p[0], p[1]), explain: 'บวกหลักสิบก่อน แล้วบวกหลักหน่วย หรือปัดเป็นสิบ' });
+  }
+});
+function addTraps(a, b) { var t = {}; if (carries(a, b)) t[addNoCarry(a, b)] = 'ทดผิด/ลืมทด'; return t; }
+function subTraps(a, b) { var t = {}; if (borrows(a, b)) t[subNoBorrow(a, b)] = 'ยืมผิด/ลืมยืม'; return t; }
+PK('add.twod', 'add', 'บวกสองหลัก', [5, 6, 7], {
+  one: function (l) {
+    var p = retry(function () { return [rndN(2), rndN(2)]; }, function (p) { var c = carries(p[0], p[1]); return l === 0 ? c === 0 : c >= 1; });
+    return PI(p[0] + ' + ' + p[1] + ' =', p[0] + p[1], { traps: addTraps(p[0], p[1]) });
+  }
+});
+PK('add.near100', 'add', 'ปัดเป็นสิบแล้วชดเชย', [7, 8, 10], {
+  nv: 5,
+  pat: function (v) {
+    var b1 = 35 + v, b2 = 47 + v, items = [];
+    pkRange(0, 4).forEach(function (i) { var a = 58 + 10 * i; items.push(PI(a + ' + ' + b1 + ' =', a + b1)); items.push(PI(a + ' + ' + b2 + ' =', a + b2)); });
+    return { items: items, observe: obsQ('68 + 35: ปัด 68 เป็น 70 (เพิ่ม 2) ต้องลด 35 ลงกี่?', 2, [3, 5, 10], '68 + 35 = 70 + 33') };
+  },
+  one: function (l) {
+    if (l <= 1) { var a = retry(function () { return ri(48, 198); }, function (a) { return a % 10 >= 7; }), b = ri(24, 58); return PI(a + ' + ' + b + ' =', a + b, { traps: addTraps(a, b) }); }
+    return stepItem('AS05');
+  }
+});
+PK('add.vert', 'add', 'บวก 3–4 หลัก', [10, 12, 14], { one: function (l) { return stepItem(l <= 1 ? 'AS05' : 'AS07'); } });
+
+/* ======================= ลบ ======================= */
+PK('sub.from10', 'sub', 'ลบจาก 10 / 20', [3, 4, 5], {
+  nv: 4,
+  pat: function (v) {
+    var items;
+    if (v === 0) items = pkRange(0, 9).map(function (a) { return PI('10 − ' + a + ' =', 10 - a); });
+    else if (v === 1) items = pkRange(0, 9).map(function (a) { return PI('10 − ? = ' + a, 10 - a); });
+    else if (v === 2) items = pkRange(10, 19).map(function (a) { return PI('20 − ' + a + ' =', 20 - a); });
+    else items = pkRange(10, 19).map(function (a) { return PI('20 − ? = ' + a, 20 - a); });
+    var t = v >= 2 ? 20 : 10;
+    return { items: items, observe: obsQ(t + ' − 3 = ' + (t - 3) + ' ตรวจคำตอบโดย ' + (t - 3) + ' + 3 ได้เท่าไร?', t, [t - 3, 3, t + 3], 'ลบกับบวกเป็นตรงข้ามกัน') };
+  },
+  one: function (l) {
+    if (l === 0) { var a = ri(0, 9); return PI('10 − ' + a + ' =', 10 - a); }
+    var b = ri(3, 19); return PI('20 − ' + b + ' =', 20 - b);
+  }
+});
+PK('sub.thinkAdd', 'sub', 'ลบด้วยการคิดบวก', [4, 5, 6], {
+  nv: 6,
+  pat: function (v) {
+    var m = 11 + v;
+    return { items: pkRange(1, 10).map(function (b) { return PI(m + ' − ' + b + ' =', m - b); }), observe: obsQ(m + ' − 4: คิดเป็น 4 + ? = ' + m + ' ได้เท่าไร?', m - 4, [m - 5, m - 3, 4], m + ' − 4 = ' + (m - 4) + ' เพราะ 4 + ' + (m - 4) + ' = ' + m) };
+  },
+  one: function (l) {
+    if (l <= 1) { var m = ri(11, 18), b = retry(function () { return ri(2, 9); }, function (b) { return b > m % 10; }); return PI(m + ' − ' + b + ' =', m - b, { explain: 'คิดว่า ' + b + ' + ? = ' + m }); }
+    var x = retry(function () { return ri(21, 90); }, function (x) { return x % 10 >= 1 && x % 10 <= 6; }), c = retry(function () { return ri(3, 9); }, function (c) { return c > x % 10; });
+    return PI(x + ' − ' + c + ' =', x - c, { traps: subTraps(x, c) });
+  }
+});
+PK('sub.bridge', 'sub', 'ลบข้ามสิบ', [4, 5, 6], {
+  nv: 8,
+  pat: function (v) {
+    var m = [52, 63, 41, 74, 85, 36, 92, 57][v % 8], u = m % 10, b = u + 3;
+    return { items: pkRange(1, 10).map(function (x) { return PI(m + ' − ' + x + ' =', m - x); }), observe: obsQ(m + ' − ' + b + ': ลบ ' + u + ' ให้ได้ ' + (m - u) + ' ก่อน แล้วลบอีกเท่าไร?', 3, [u, b, 10], m + ' − ' + b + ' = ' + (m - u) + ' − 3') };
+  },
+  one: function (l) {
+    var x = retry(function () { return ri(l <= 1 ? 22 : 31, l <= 1 ? 75 : 98); }, function (x) { return x % 10 >= 1 && x % 10 <= 7; }), c = retry(function () { return ri(2, 9); }, function (c) { return c > x % 10; });
+    return PI(x + ' − ' + c + ' =', x - c, { traps: subTraps(x, c), explain: 'ลบให้เหลือเต็มสิบก่อน แล้วลบที่เหลือ' });
+  }
+});
+PK('sub.minus9', 'sub', 'ลบ 9 / ลบ 8', [3, 4, 5], {
+  nv: 4,
+  pat: function (v) {
+    var items, ob;
+    if (v === 0) { items = pkRange(10, 19).map(function (x) { return PI(x + ' − 9 =', x - 9); }); ob = obsQ('ลบ 9 เหมือนลบ 10 แล้วทำอย่างไรต่อ?', 'บวก 1', ['ลบ 1', 'บวก 9', 'คูณ 10'], '−9 = −10 แล้วบวกคืน 1'); }
+    else if (v === 1) { items = pkRange(0, 9).map(function (i) { var x = 11 + i * 10; return PI(x + ' − 9 =', x - 9); }); ob = obsQ('คำตอบของข้อต่อ ๆ ไปเพิ่มขึ้นทีละเท่าไร (ตัวตั้งเพิ่มทีละ 10)?', 10, [9, 1, 11], 'ตัวตั้งเพิ่ม 10 คำตอบก็เพิ่ม 10'); }
+    else if (v === 2) { items = pkRange(10, 19).map(function (x) { return PI(x + ' − 8 =', x - 8); }); ob = obsQ('ลบ 8 เหมือนลบ 10 แล้วบวกคืนเท่าไร?', 2, [1, 8, 10], '−8 = −10 แล้วบวกคืน 2'); }
+    else { items = pkRange(21, 30).map(function (x) { return PI(x + ' − 9 =', x - 9); }); ob = null; }
+    return { items: items, observe: ob };
+  },
+  one: function (l) {
+    if (l <= 1) { var x = ri(21, 99), d = pick([9, 9, 8]); return PI(x + ' − ' + d + ' =', x - d, { explain: '−' + d + ' = −10 แล้วบวกคืน ' + (10 - d) }); }
+    var y = ri(41, 99), e = pick([19, 29, 18]); return PI(y + ' − ' + e + ' =', y - e, { explain: 'ลบเต็มสิบแล้วบวกคืน' });
+  }
+});
+PK('sub.compensate', 'sub', 'ลบแบบปัดแล้วชดเชย', [5, 6, 8], {
+  nv: 4,
+  pat: function (v) {
+    var top = [100, 100, 200, 200][v], e = [9, 8, 9, 8][v];
+    return { items: pkRange(0, 9).map(function (k) { return PI(top + ' − ' + (10 * k + e) + ' =', top - 10 * k - e); }),
+      observe: obsQ('100 − 39: ลบ 40 ก่อน (ลบเกินไป 1) ต้องทำอย่างไร?', 'บวกคืน 1', ['ลบเพิ่ม 1', 'บวกคืน 9', 'ไม่ต้องทำอะไร'], '100 − 39 = 100 − 40 + 1') };
+  },
+  one: function (l) {
+    if (l <= 1) { var a = ri(41, 99), k = ri(1, 3), b = 10 * k + pick([9, 9, 8]); if (a <= b + 1) a = b + 12; return PI(a + ' − ' + b + ' =', a - b, { traps: subTraps(a, b), explain: 'ลบเต็มสิบ แล้วชดเชย' }); }
+    var p = retry(function () { return [rndN(2), rndN(2)]; }, function (p) { return p[0] > p[1] && borrows(p[0], p[1]) === 1; });
+    return PI(p[0] + ' − ' + p[1] + ' =', p[0] - p[1], { traps: subTraps(p[0], p[1]) });
+  }
+});
+PK('sub.twod', 'sub', 'ลบสองหลัก', [5, 6, 7], {
+  one: function (l) {
+    var p = retry(function () { return [rndN(2), rndN(2)]; }, function (p) { return p[0] > p[1] && (l === 0 ? borrows(p[0], p[1]) === 0 : borrows(p[0], p[1]) === 1); });
+    return PI(p[0] + ' − ' + p[1] + ' =', p[0] - p[1], { traps: subTraps(p[0], p[1]) });
+  }
+});
+PK('sub.zeros', 'sub', 'ลบจากเลขที่มีศูนย์', [8, 10, 12], {
+  nv: 3,
+  pat: function (v) {
+    var top = [1000, 2000, 3000][v], k = [11, 11, 21][v];
+    return { items: pkRange(1, 10).map(function (i) { return PI(top + ' − ' + (k * i) + ' =', top - k * i); }),
+      observe: obsQ('คำตอบของข้อต่อ ๆ ไปลดลงทีละเท่าไร?', k, [k - 1, k + 1, 10], 'ตัวลบเพิ่มทีละ ' + k + ' คำตอบก็ลดทีละ ' + k) };
+  },
+  one: function (l) {
+    if (l <= 1) { var a = pick([1000, 2000, 3000, 4000]), b = ri(101, 899); return PI(a + ' − ' + b + ' =', a - b, { traps: subTraps(a, b), explain: 'ยืมข้ามศูนย์ ศูนย์ที่ถูกยืมกลายเป็น 9' }); }
+    return stepItem('AS10');
+  }
+});
+PK('sub.borrow', 'sub', 'ลบ 3–4 หลัก', [10, 12, 14], { one: function (l) { return stepItem(l <= 1 ? 'AS06' : 'AS08'); } });
+
+/* ======================= คูณ ======================= */
+PK('mul.table', 'mul', 'สูตรคูณ', [3, 4, 5], {
+  nv: 22,
+  pat: function (v) {
+    var t = TL[Math.floor(v / 2) % TL.length], dir = v % 2, items = [];
+    if (dir === 0) pkRange(1, 10).forEach(function (n) { items.push(PI(t + ' × ' + n + ' =', t * n)); });
+    else pkRange(1, 10).reverse().forEach(function (n) { items.push(PI(n + ' × ' + t + ' =', t * n)); });
+    return { items: items, observe: dir === 0 ? obsQ('คำตอบของแม่ ' + t + ' เพิ่มขึ้นทีละเท่าไร?', t, [t + 1, t - 1, 2 * t], 'แต่ละข้อเพิ่มทีละ ' + t) : null };
+  },
+  one: function (l) {
+    if (l === 0) { var a = pick([2, 5, 10, 3, 4]), b = ri(1, 10); return PI(a + ' × ' + b + ' =', a * b); }
+    var hi = l === 1 ? 9 : 12, x = ri(2, hi), y = ri(2, hi); return chance(0.5) ? PI(x + ' × ' + y + ' =', x * y) : PI(y + ' × ' + x + ' =', x * y);
+  }
+});
+PK('mul.times5', 'mul', '×5 = ×10 แล้วหารสอง', [3, 4, 5], {
+  nv: 4,
+  pat: function (v) {
+    var ns = (v % 2 === 0) ? pkRange(1, 10).map(function (i) { return 2 * i; }) : pkRange(1, 10).map(function (i) { return 2 * i - 1; });
+    return { items: ns.map(function (n) { return v < 2 ? PI(n + ' × 5 =', n * 5) : PI('5 × ' + n + ' =', n * 5); }), observe: obsQ('คูณ 5 เหมือนคูณ 10 แล้วทำอย่างไรต่อ?', 'หารด้วย 2', ['คูณ 2', 'ลบ 5', 'บวก 5'], '×5 = ×10 ÷ 2') };
+  },
+  one: function (l) { var n = l <= 1 ? ri(11, 50) : ri(21, 99); return PI(n + ' × 5 =', n * 5, { explain: '×10 แล้วหารสอง' }); }
+});
+PK('mul.times4', 'mul', '×4 = คูณสองสองครั้ง', [3, 4, 5], {
+  nv: 3,
+  pat: function (v) {
+    var items = pkRange(1, 10).map(function (i) { var n = 10 * v + i; return PI(n + ' × 4 =', 4 * n); });
+    return { items: items, observe: obsQ('คูณ 4 เหมือนคูณ 2 อีกกี่ครั้ง?', '2 ครั้ง', ['1 ครั้ง', '3 ครั้ง', '4 ครั้ง'], '×4 = ×2 แล้ว ×2 อีกครั้ง') };
+  },
+  one: function (l) { var n = l <= 1 ? ri(11, 49) : ri(31, 99); return PI(n + ' × 4 =', n * 4, { explain: 'คูณ 2 สองครั้ง' }); }
+});
+PK('mul.times9', 'mul', '×9 = ×10 ลบ 1 ชุด', [3, 4, 5], {
+  nv: 3,
+  pat: function (v) {
+    var items = pkRange(1, 10).map(function (i) { var n = 10 * v + i; return PI(n + ' × 9 =', 9 * n); });
+    return { items: items, observe: v < 1 ? obsQ('เลขโดดของคำตอบแต่ละข้อ บวกกันได้เท่าไร?', 9, [8, 10, 18], 'ผลคูณของ 9 เลขโดดรวมกันเป็น 9 เสมอ (ในแม่ 9 ถึง 9 × 10)') : null };
+  },
+  one: function (l) { var n = l <= 1 ? ri(11, 30) : ri(31, 99); return PI(n + ' × 9 =', n * 9, { explain: '×10 แล้วลบ ' + n }); }
+});
+PK('mul.mixed', 'mul', 'สูตรคูณผสม', [3, 4, 5], {
+  one: function (l) { var hi = l <= 1 ? 9 : 12, x = ri(2, hi), y = ri(2, hi); return PI(x + ' × ' + y + ' =', x * y); }
+});
+PK('mul.split2d', 'mul', 'แยกสิบแยกหน่วย', [7, 8, 10], {
+  nv: 4,
+  pat: function (v) {
+    var m = 3 + v;
+    return { items: pkRange(21, 30).map(function (n) { return PI(n + ' × ' + m + ' =', n * m); }), observe: obsQ('23 × ' + m + ' = 20 × ' + m + ' + 3 × ' + m + ' = ' + (20 * m) + ' + ?', 3 * m, [3 * m + 1, 3 * m - 1, m], '3 × ' + m + ' = ' + (3 * m)) };
+  },
+  one: function (l) {
+    if (l <= 1) { var p = retry(function () { return [rndN(2), ri(3, 9)]; }, function (p) { return !mulNoCarryOK(p[0], p[1]); }); return PI(p[0] + ' × ' + p[1] + ' =', p[0] * p[1], { traps: mulTraps(p[0], p[1]), explain: 'แยกสิบแยกหน่วยแล้วบวกกัน' }); }
+    return stepItem(chance(0.5) ? 'MU05' : 'MU06');
+  }
+});
+function mulTraps(a, m) { var t = {}; if (m < 10 && mulNoCarry(a, m) !== a * m) t[mulNoCarry(a, m)] = 'ทดผิด/ลืมทด'; return t; }
+PK('mul.d3', 'mul', '3 หลัก × 1 หลัก', [9, 10, 12], { one: function (l) { return stepItem(l <= 1 ? 'MU05' : 'MU06'); } });
+
+/* ======================= หาร ======================= */
+PK('div.inverse', 'div', 'หารคือสูตรคูณย้อนกลับ', [3, 4, 5], {
+  nv: 22,
+  pat: function (v) {
+    var t = TL[Math.floor(v / 2) % TL.length], form = v % 2;
+    var items = form === 0 ? pkRange(1, 10).map(function (n) { return PI((t * n) + ' ÷ ' + t + ' =', n); }) : pkRange(1, 10).map(function (n) { return PI(t + ' × ? = ' + (t * n), n); });
+    return { items: items, observe: obsQ((t * 6) + ' ÷ ' + t + ' คิดว่า ' + t + ' คูณอะไรได้ ' + (t * 6) + '?', 6, [5, 7, t], 'หารคือย้อนกลับของคูณ') };
+  },
+  one: function (l) { var hi = l <= 1 ? 9 : 12, t = l === 0 ? pick([2, 3, 4, 5, 10]) : ri(2, hi), n = ri(l === 0 ? 1 : 2, hi); return PI((t * n) + ' ÷ ' + t + ' =', n, { explain: t + ' × ? = ' + (t * n) }); }
+});
+PK('div.half4', 'div', '÷4 = ครึ่งสองครั้ง', [3, 4, 5], {
+  nv: 3,
+  pat: function (v) {
+    return { items: pkRange(1, 10).map(function (i) { var n = 10 * v + i; return PI((4 * n) + ' ÷ 4 =', n); }), observe: obsQ('หารด้วย 4 เหมือนหารด้วย 2 อีกกี่ครั้ง?', '2 ครั้ง', ['1 ครั้ง', '3 ครั้ง', '4 ครั้ง'], '÷4 = ÷2 แล้ว ÷2 อีกครั้ง') };
+  },
+  one: function (l) { var n = l <= 1 ? ri(12, 49) : ri(50, 249); return PI((4 * n) + ' ÷ 4 =', n, { explain: 'ครึ่งสองครั้ง' }); }
+});
+PK('div.mixed', 'div', 'หารลงตัวผสม', [4, 5, 10], { one: function (l) { return stepItem(l <= 1 ? 'DV02' : 'DV04'); } });
+PK('div.rem', 'div', 'หารมีเศษ', [7, 9, 11], {
+  nv: 14,
+  pat: function (v) {
+    var b = 3 + (v % 7), lo = Math.ceil(20 / b), hi = Math.floor(80 / b), q = lo + (Math.floor(v / 7) * 3) % Math.max(1, hi - lo + 1), items = [];
+    pkRange(0, 9).forEach(function (i) { items.push(divRemItem(b * q + i, b)); });
+    return { items: items, observe: obsQ('เมื่อหารด้วย ' + b + ' เศษที่มากที่สุดที่เป็นไปได้คือเท่าไร?', b - 1, [b, b + 1, b - 2], 'เศษต้องน้อยกว่าตัวหารเสมอ') };
+  },
+  one: function (l) { return stepItem(l <= 1 ? 'DV03' : 'DV05'); }
+});
+PK('div.long3', 'div', 'หาร 3 หลัก', [15, 17, 20], {
+  nv: 6,
+  pat: function (v) {
+    var b = 3 + (v % 6), q0 = Math.ceil(100 / b) + 1 + Math.floor(v / 6) * 3;
+    return { items: pkRange(0, 9).map(function (i) { return PI((b * (q0 + i)) + ' ÷ ' + b + ' =', q0 + i); }), observe: obsQ('ตัวตั้งเพิ่มทีละ ' + b + ' ผลหารเพิ่มทีละเท่าไร?', 1, [b, 2, 10], 'เพิ่มตัวตั้ง ' + b + ' = ผลหารเพิ่ม 1') };
+  },
+  one: function (l) { return stepItem(l <= 1 ? 'DV04' : 'DV05'); }
+});
+
+/* ======================= เศษส่วน ======================= */
+function fracPic(k, d) {
+  var cells = [], rows = [], i;
+  for (i = 0; i < d; i++) cells.push(i < k ? '🟦' : '⬜');
+  for (i = 0; i < d; i += 10) rows.push(cells.slice(i, i + 10).join(''));
+  return rows.join('\n');
+}
+PK('frac.picture', 'frac', 'อ่านเศษส่วนจากรูป', [6, 7, 8], {
+  nv: 6,
+  pat: function (v) {
+    var d = [11, 12, 14, 16, 15, 18][v % 6];
+    return { items: pkRange(1, 10).map(function (k) { return PI(fracPic(k, d) + '\nส่วนที่ระบายสีเป็นเศษส่วนเท่าไร', k + '/' + d, { type: 'frac', noReduce: true, picK: k, picD: d, explain: 'ตัวเศษ = ช่องที่ระบายสี ตัวส่วน = ช่องทั้งหมด' }); }),
+      observe: obsQ('ตัวส่วนของเศษส่วนบอกอะไร?', 'จำนวนช่องทั้งหมด', ['จำนวนช่องที่ระบายสี', 'จำนวนช่องที่ว่าง', 'ผลต่างของสองช่อง'], 'ตัวส่วน = ช่องทั้งหมด ตัวเศษ = ช่องที่ระบายสี') };
+  },
+  one: function (l) { var d = ri(3, 12), k = ri(1, d - 1); return PI(fracPic(k, d) + '\nส่วนที่ระบายสีเป็นเศษส่วนเท่าไร', k + '/' + d, { type: 'frac', noReduce: true, picK: k, picD: d }); }
+});
+PK('frac.equiv', 'frac', 'เศษส่วนที่เท่ากัน', [8, 9, 10], {
+  nv: 8,
+  pat: function (v) {
+    var base = [[1, 2], [1, 3], [2, 3], [3, 4], [1, 4], [2, 5], [3, 5], [1, 5]][v % 8], a = base[0], b = base[1];
+    return { items: pkRange(2, 11).map(function (k) { return PI(F(a, b) + ' = ' + F('?', b * k), a * k, { explain: 'ตัวส่วนคูณ ' + k + ' ตัวเศษก็ต้องคูณ ' + k }); }),
+      observe: obsQ('จากข้อหนึ่งไปอีกข้อ ตัวเศษกับตัวส่วนเปลี่ยนอย่างไรเพื่อให้เศษส่วนเท่าเดิม?', 'คูณด้วยจำนวนเดียวกัน', ['บวกด้วยจำนวนเดียวกัน', 'ลบด้วยจำนวนเดียวกัน', 'เปลี่ยนแค่ตัวส่วน'], 'คูณทั้งตัวเศษและตัวส่วนด้วยจำนวนเดียวกัน') };
+  },
+  one: function (l) { return stepItem('FD01'); }
+});
+PK('frac.simplest', 'frac', 'ทำเป็นเศษส่วนอย่างต่ำ', [8, 9, 11], {
+  nv: 8,
+  pat: function (v) {
+    var base = [[1, 2], [2, 3], [1, 3], [3, 4], [2, 5], [3, 5], [1, 4], [4, 5]][v % 8], a = base[0], b = base[1];
+    return { items: pkRange(2, 11).map(function (k) { return PI('ทำให้เป็นอย่างต่ำ  ' + F(a * k, b * k) + ' =', a + '/' + b, { type: 'frac', explain: 'หารทั้งตัวเศษและตัวส่วนด้วย ' + k }); }),
+      observe: obsQ('ทำไมทุกข้อจึงได้คำตอบเดียวกัน?', 'เป็นเศษส่วนที่เท่ากัน', ['เป็นเลขเดียวกัน', 'บังเอิญ', 'คิดผิด'], 'ทุกข้อเป็นเศษส่วนที่เท่ากัน ทำให้เป็นอย่างต่ำได้ค่าเดียวกัน') };
+  },
+  one: function (l) { return stepItem('FD02'); }
+});
+function fracCompareItem(a, b, c, d) {
+  var x = a * d, y = c * b, ans = x > y ? '1' : x < y ? '2' : '3';
+  return { q: 'เศษส่วนใดมากกว่า\n' + F(a, b) + '  กับ  ' + F(c, d), type: 'choice', choices: [F(a, b), F(c, d), 'เท่ากัน'], ans: ans, explain: 'เทียบด้วยการทำตัวส่วนให้เท่ากัน หรือดูตัวเศษ/ตัวส่วน' };
+}
+PK('frac.compare', 'frac', 'เปรียบเทียบเศษส่วน', [6, 7, 8], {
+  nv: 10,
+  pat: function (v) {
+    var items = [], i;
+    if (v < 5) {
+      var d = [8, 10, 6, 9, 12][v], pairs = [];
+      for (i = 1; i < d; i++) for (var j = i + 1; j < d; j++) pairs.push([i, j]);
+      shuffle(pairs).slice(0, 10).forEach(function (p) { items.push(chance(0.5) ? fracCompareItem(p[0], d, p[1], d) : fracCompareItem(p[1], d, p[0], d)); });
+      return { items: items, observe: obsQ('ตัวส่วนเท่ากัน เศษส่วนที่ตัวเศษมากกว่าเป็นอย่างไร?', 'มากกว่า', ['น้อยกว่า', 'เท่ากัน', 'บอกไม่ได้'], 'ส่วนเท่ากัน ตัวเศษมากกว่า = มากกว่า') };
+    }
+    var n = [1, 2, 3, 1, 2][v - 5], dens = [];
+    for (i = n + 1; i <= 12; i++) dens.push(i);
+    var pr = []; for (i = 0; i < dens.length; i++) for (var k = i + 1; k < dens.length; k++) pr.push([dens[i], dens[k]]);
+    shuffle(pr).slice(0, 10).forEach(function (p) { items.push(chance(0.5) ? fracCompareItem(n, p[0], n, p[1]) : fracCompareItem(n, p[1], n, p[0])); });
+    return { items: items, observe: obsQ('ตัวเศษเท่ากัน เศษส่วนที่ตัวส่วนน้อยกว่าเป็นอย่างไร?', 'มากกว่า', ['น้อยกว่า', 'เท่ากัน', 'บอกไม่ได้'], 'ตัวเศษเท่ากัน ตัวส่วนน้อยกว่า = ชิ้นใหญ่กว่า = มากกว่า') };
+  },
+  one: function (l) {
+    var ds = [2, 3, 4, 5, 6, 8, 10], b = pick(ds), d = pick(ds), a = ri(1, b - 1), c = ri(1, d - 1);
+    if (a * d === c * b) c = c === 1 ? 2 : c - 1;
+    if (c >= d) c = d - 1;
+    if (a * d === c * b) return fracCompareItem(1, 2, 1, 3);
+    return fracCompareItem(a, b, c, d);
+  }
+});
+PK('frac.addsub', 'frac', 'บวกลบเศษส่วน', [8, 10, 14], {
+  nv: 4,
+  pat: function (v) {
+    var d = [13, 13, 17, 17][v], k = [2, 2, 3, 3][v], sub = v % 2 === 1, items;
+    items = pkRange(sub ? k + 1 : 1, sub ? k + 10 : 10).map(function (n) { return sub ? PI(F(n, d) + ' − ' + F(k, d) + ' =', (n - k) + '/' + d, { type: 'frac' }) : PI(F(n, d) + ' + ' + F(k, d) + ' =', (n + k) + '/' + d, { type: 'frac' }); });
+    return { items: items, observe: obsQ('บวก/ลบเศษส่วนที่ตัวส่วนเท่ากัน ตัวส่วนของคำตอบเป็นอย่างไร?', 'เท่าเดิม', ['บวกกัน', 'คูณกัน', 'เปลี่ยนไปมาก'], 'ตัวส่วนเท่ากันแล้วคิดเฉพาะตัวเศษ ตัวส่วนคงเดิม') };
+  },
+  one: function (l) { return stepItem(l <= 1 ? pick(['FD05', 'FD06']) : 'FD09'); }
+});
+PK('frac.mixImp', 'frac', 'เศษเกิน ↔ จำนวนคละ', [10, 12, 14], {
+  nv: 6,
+  pat: function (v) {
+    var d = [7, 5, 11, 9, 13, 8][v % 6], items = [], n = d + 1;
+    while (items.length < 10) {
+      if (n % d !== 0 && gcd(n % d, d) === 1) items.push(PI('เขียนเป็นจำนวนคละ  ' + F(n, d) + ' =', fracStr(n, d), { type: 'frac', form: 'mixed', explain: n + ' ÷ ' + d + ' ได้ ' + Math.floor(n / d) + ' เศษ ' + (n % d) }));
+      n++;
+    }
+    return { items: items, observe: obsQ('ผลหารของ ตัวเศษ ÷ ตัวส่วน คือส่วนใดของจำนวนคละ?', 'จำนวนเต็ม', ['ตัวเศษ', 'ตัวส่วน', 'ตัวส่วนร่วม'], 'ผลหารคือจำนวนเต็ม เศษที่เหลือคือตัวเศษ') };
+  },
+  one: function (l) { return stepItem(l <= 1 ? 'FD03' : 'FD04'); }
+});
+PK('frac.addMixed', 'frac', 'บวกลบจำนวนคละ', [14, 16, 20], { one: function (l) { return stepItem(l <= 1 ? 'FD07' : pick(['FD08', 'FD10'])); } });
+PK('frac.dec1', 'frac', 'ทศนิยม 1 ตำแหน่ง', [8, 10, 12], { one: function (l) { return stepItem(l <= 1 ? 'FD11' : pick(['FD12', 'FD13'])); } });
+PK('frac.dec2', 'frac', 'ทศนิยม 2 ตำแหน่ง / คูณทศนิยม', [14, 16, 18], { one: function (l) { return stepItem(l <= 1 ? 'FD14' : 'FD15'); } });
+
+/* ======================= รอบ 3 ขึ้นไป: ใช้ตัวสร้าง 50 ขั้นเดิม ======================= */
+function stepKind(id) {
+  var k = 'step:' + id;
+  if (!PAGE_KINDS[k]) {
+    var st = STEP_BY_ID[id];
+    var sp = Math.max(3, Math.round(st.spp * 0.55));
+    PK(k, null, st.name, [sp, sp, sp], { one: function () { return stepItem(id); } });
+    PAGE_KINDS[k].topic = ({ addsub: 'add', mul: 'mul', div: 'div', fracdec: 'frac' })[st.skill];
+  }
+  return PAGE_KINDS[k];
+}
+
+/* ======================= แผนรอบ/สัปดาห์ ======================= */
+/** รายการ [ชนิดหน้า, ระดับ, จำนวนหน้า, ตัวแปรเริ่มต้น] */
+var ROUND_PLAN = {
+  add: {
+    1: { total: 100, sets: [
+      [['add.pairs10', 0, 4, 0], ['add.plus9', 0, 2, 0], ['add.bridge10', 0, 2, 0], ['add.bridge2d', 0, 2, 0]],
+      [['add.plus9', 0, 2, 2], ['add.bridge10', 0, 3, 4], ['add.bridge2d', 0, 3, 2], ['add.pairs10', 1, 2, 0]],
+      [['add.plus9', 1, 2], ['add.bridge10', 1, 2], ['add.bridge2d', 1, 3], ['add.twod', 1, 3]],
+      [['add.plus9', 2, 2], ['add.bridge10', 2, 2], ['add.bridge2d', 2, 2], ['add.twod', 2, 4]],
+      [['add.pairs10', 1, 1], ['add.plus9', 1, 1], ['add.bridge10', 2, 2], ['add.bridge2d', 2, 3], ['add.twod', 2, 3]],
+      [['add.plus9', 2, 2], ['add.bridge10', 2, 2], ['add.bridge2d', 2, 3], ['add.twod', 2, 3]]] },
+    2: { total: 50, sets: [
+      [['add.near100', 0, 3, 0], ['add.vert', 1, 2]], [['add.near100', 0, 3, 3], ['add.vert', 1, 2]],
+      [['add.near100', 1, 2], ['add.vert', 1, 2], ['add.vert', 2, 1]], [['add.near100', 2, 2], ['add.vert', 2, 3]],
+      [['add.near100', 2, 1], ['add.vert', 1, 1], ['add.vert', 2, 3]], [['add.near100', 2, 2], ['add.vert', 2, 3]]] },
+    3: { total: 40, steps: ['AS07', 'AS11', 'AS12', 'AS09'] }
+  },
+  sub: {
+    1: { total: 100, sets: [
+      [['sub.from10', 0, 2, 0], ['sub.thinkAdd', 0, 2, 0], ['sub.bridge', 0, 2, 0], ['sub.minus9', 0, 2, 0], ['sub.compensate', 0, 2, 0]],
+      [['sub.from10', 0, 2, 2], ['sub.thinkAdd', 0, 2, 2], ['sub.bridge', 0, 2, 2], ['sub.minus9', 0, 2, 2], ['sub.compensate', 0, 2, 2]],
+      [['sub.from10', 1, 1], ['sub.thinkAdd', 1, 2], ['sub.bridge', 1, 2], ['sub.minus9', 1, 2], ['sub.compensate', 1, 3]],
+      [['sub.thinkAdd', 2, 1], ['sub.bridge', 2, 2], ['sub.minus9', 2, 2], ['sub.compensate', 2, 3], ['sub.twod', 1, 2]],
+      [['sub.from10', 1, 1], ['sub.thinkAdd', 2, 1], ['sub.bridge', 2, 2], ['sub.minus9', 2, 2], ['sub.compensate', 2, 2], ['sub.twod', 2, 2]],
+      [['sub.thinkAdd', 2, 1], ['sub.bridge', 2, 2], ['sub.minus9', 2, 2], ['sub.compensate', 2, 3], ['sub.twod', 2, 2]]] },
+    2: { total: 50, sets: [
+      [['sub.zeros', 0, 3, 0], ['sub.borrow', 1, 2]], [['sub.zeros', 0, 3, 1], ['sub.borrow', 1, 2]],
+      [['sub.zeros', 1, 2], ['sub.borrow', 1, 1], ['sub.borrow', 2, 2]], [['sub.zeros', 2, 2], ['sub.borrow', 2, 3]],
+      [['sub.zeros', 2, 2], ['sub.borrow', 1, 1], ['sub.borrow', 2, 2]], [['sub.zeros', 2, 2], ['sub.borrow', 2, 3]]] },
+    3: { total: 40, steps: ['AS08', 'AS10', 'AS09', 'AS12'] }
+  },
+  mul: {
+    1: { total: 100, sets: [
+      [['mul.table', 0, 1, 0], ['mul.table', 0, 1, 2], ['mul.table', 0, 1, 4], ['mul.times5', 0, 2, 0], ['mul.table', 0, 1, 6], ['mul.table', 0, 1, 8], ['mul.times4', 0, 2, 0], ['mul.table', 0, 1, 1]],
+      [['mul.table', 0, 1, 10], ['mul.table', 0, 1, 12], ['mul.table', 0, 1, 14], ['mul.table', 0, 1, 16], ['mul.times9', 0, 2, 0], ['mul.times4', 0, 1, 2], ['mul.table', 0, 1, 18], ['mul.table', 0, 1, 20], ['mul.times5', 0, 1, 2]],
+      [['mul.table', 1, 4], ['mul.times9', 1, 2], ['mul.times4', 1, 2], ['mul.times5', 1, 2]],
+      [['mul.table', 2, 3], ['mul.times9', 2, 2], ['mul.times4', 2, 2], ['mul.times5', 2, 1], ['mul.mixed', 1, 2]],
+      [['mul.mixed', 1, 3], ['mul.mixed', 2, 3], ['mul.table', 2, 1], ['mul.times9', 1, 1], ['mul.times4', 1, 1], ['mul.times5', 1, 1]],
+      [['mul.mixed', 2, 6], ['mul.table', 2, 1], ['mul.times9', 2, 1], ['mul.times4', 2, 1], ['mul.times5', 2, 1]]] },
+    2: { total: 40, sets: [
+      [['mul.split2d', 0, 3, 0], ['mul.split2d', 1, 1]], [['mul.split2d', 0, 2, 3], ['mul.split2d', 1, 2]],
+      [['mul.split2d', 1, 2], ['mul.d3', 1, 2]], [['mul.split2d', 2, 1], ['mul.d3', 1, 1], ['mul.d3', 2, 2]],
+      [['mul.split2d', 2, 1], ['mul.d3', 2, 3]], [['mul.split2d', 2, 1], ['mul.d3', 2, 3]]] },
+    3: { total: 30, steps: ['MU09', 'MU10', 'MU11', 'MU12'] }
+  },
+  div: {
+    1: { total: 100, sets: [
+      [['div.inverse', 0, 6, 0], ['div.half4', 0, 2, 0], ['div.rem', 0, 2, 0]],
+      [['div.inverse', 0, 1, 6], ['div.inverse', 0, 1, 8], ['div.inverse', 0, 1, 10], ['div.inverse', 0, 1, 12], ['div.inverse', 0, 1, 14], ['div.inverse', 0, 1, 16], ['div.half4', 0, 1, 2], ['div.rem', 0, 3, 2]],
+      [['div.inverse', 1, 3], ['div.mixed', 1, 2], ['div.rem', 1, 3], ['div.half4', 1, 2]],
+      [['div.inverse', 2, 3], ['div.mixed', 1, 2], ['div.rem', 1, 3], ['div.half4', 2, 2]],
+      [['div.mixed', 1, 3], ['div.rem', 1, 3], ['div.inverse', 2, 2], ['div.half4', 1, 1], ['div.mixed', 2, 1]],
+      [['div.mixed', 2, 3], ['div.rem', 1, 3], ['div.inverse', 2, 2], ['div.half4', 2, 2]]] },
+    2: { total: 25, sets: [
+      [['div.long3', 0, 3, 0]], [['div.long3', 0, 3, 3]], [['div.long3', 1, 2], ['div.long3', 2, 1]],
+      [['div.long3', 1, 1], ['div.long3', 2, 2]], [['div.long3', 1, 1], ['div.long3', 2, 2]], [['div.long3', 1, 1], ['div.long3', 2, 2]]] },
+    3: { total: 25, steps: ['DV09', 'DV10', 'DV11'] }
+  },
+  frac: {
+    1: { total: 50, sets: [
+      [['frac.picture', 0, 2, 0], ['frac.equiv', 0, 1, 0], ['frac.simplest', 0, 1, 0], ['frac.compare', 0, 1, 0]],
+      [['frac.picture', 0, 1, 2], ['frac.equiv', 0, 1, 1], ['frac.simplest', 0, 1, 1], ['frac.compare', 0, 1, 5], ['frac.addsub', 0, 1, 0]],
+      [['frac.equiv', 1, 1], ['frac.simplest', 1, 1], ['frac.compare', 1, 2], ['frac.addsub', 1, 1]],
+      [['frac.equiv', 1, 1], ['frac.simplest', 1, 1], ['frac.compare', 1, 1], ['frac.addsub', 1, 2]],
+      [['frac.picture', 1, 1], ['frac.equiv', 1, 1], ['frac.simplest', 1, 1], ['frac.compare', 1, 1], ['frac.addsub', 1, 1]],
+      [['frac.equiv', 1, 1], ['frac.simplest', 1, 1], ['frac.compare', 1, 1], ['frac.addsub', 1, 2]]] },
+    2: { total: 40, sets: [
+      [['frac.mixImp', 0, 3, 0], ['frac.addMixed', 1, 1]], [['frac.mixImp', 0, 2, 3], ['frac.addMixed', 1, 1], ['frac.dec1', 1, 1]],
+      [['frac.mixImp', 1, 1], ['frac.addMixed', 1, 2], ['frac.dec1', 1, 1]], [['frac.mixImp', 2, 1], ['frac.addMixed', 2, 2], ['frac.dec1', 1, 1]],
+      [['frac.mixImp', 1, 1], ['frac.addMixed', 2, 1], ['frac.dec1', 2, 2]], [['frac.mixImp', 2, 1], ['frac.addMixed', 2, 2], ['frac.dec1', 2, 1]]] },
+    3: { total: 30, steps: ['FD09', 'FD10', 'FD14', 'FD15'] }
+  }
+};
+
+function planRound(round) { return Math.max(1, Math.min(MAX_PLAN_ROUND, Number(round) || 1)); }
+/** คืนแผนของชุดที่ setNo (1–6): {total, pages:[{kind, lvl, v}]} */
+function setPlan(topic, round, setNo) {
+  var rp = ROUND_PLAN[topic][planRound(round)], total = rp.total, np = Math.ceil(total / PAGE_SIZE), pages = [], j;
+  if (rp.steps) {
+    for (j = 0; j < np; j++) pages.push({ kind: 'step:' + rp.steps[(setNo + j) % rp.steps.length], lvl: 1, v: 0 });
+  } else {
+    rp.sets[setNo - 1].forEach(function (e) {
+      for (var i = 0; i < e[2]; i++) pages.push({ kind: e[0], lvl: e[1], v: (e[3] || 0) + i });
+    });
+  }
+  return { total: total, pages: pages.slice(0, np), np: np };
+}
+function pageKind(id) {
+  if (id.indexOf('step:') === 0) return stepKind(id.slice(5));
+  return PAGE_KINDS[id];
+}
+function pageSpp(kindId, lvl) { var k = pageKind(kindId); return k.spp[Math.min(lvl, k.spp.length - 1)]; }
+/** เวลาเป้าหมาย X ของชุด (วินาที) = Σ ข้อ × วินาทีต่อข้อ */
+function setXSec(topic, round, setNo) {
+  var p = setPlan(topic, round, setNo), s = 0;
+  p.pages.forEach(function (pg, i) { var n = i === p.np - 1 ? p.total - PAGE_SIZE * (p.np - 1) : PAGE_SIZE; s += n * pageSpp(pg.kind, pg.lvl); });
+  return Math.round(s);
+}
+
+/**
+ * สร้างข้อของชุด A
+ * ctx.usedSigs = ลายเซ็นที่เคยออกใน 30 วัน (ใช้กับหน้าสุ่มเท่านั้น หน้ารูปแบบซ้ำข้อเดิมได้โดยตั้งใจ)
+ * คืน {items, pages:[{n, start, kind, label, lvl, pattern, title, observe}], xSec}
+ */
+function buildASetItems(topic, round, setNo, ctx) {
+  var plan = setPlan(topic, round, setNo), items = [], pages = [], inSet = {};
+  plan.pages.forEach(function (pg, pi) {
+    var kind = pageKind(pg.kind), n = pi === plan.np - 1 ? plan.total - PAGE_SIZE * (plan.np - 1) : PAGE_SIZE, got = [], obs = null, pattern = false;
+    if (pg.lvl === 0 && kind.pat) {
+      var r = kind.pat(pg.v % kind.nv);
+      got = r.items.slice(0, n); obs = r.observe; pattern = true;
+    } else {
+      for (var i = 0; i < n; i++) {
+        var it = null, base = '';
+        for (var t = 0; t < 40; t++) {
+          it = kind.one(pg.lvl);
+          base = 'PG:' + kind.id + '|' + String(it.q).replace(/\s+/g, '');
+          if (!inSet[base] && !(ctx.usedSigs && ctx.usedSigs[base])) break;
+        }
+        inSet[base] = 1;
+        got.push(it);
+      }
+    }
+    got.forEach(function (it) {
+      var base = 'PG:' + kind.id + '|' + String(it.q).replace(/\s+/g, '');
+      it.key = 'PG:' + kind.id; it.tag = kind.id; it.cat = it.cat || TOPIC_CAT[topic]; it.tier = pg.lvl; it.main = true;
+      it.page = pi + 1; it.pattern = pattern; it.topic = topic; it.round = planRound(round);
+      it.sig = base;
+      if (!pattern && ctx.usedSigs) ctx.usedSigs[base] = 1;
+      items.push(it);
+    });
+    pages.push({ n: got.length, start: items.length - got.length, kind: kind.id, label: kind.label, lvl: pg.lvl, pattern: pattern,
+      title: (pattern ? 'หา "เคล็ดลับ" จากแบบรูป: ' : '') + kind.label, observe: obs });
+  });
+  return { items: items, pages: pages, xSec: setXSec(topic, round, setNo) };
+}
+/** โจทย์ 1 ข้อของชนิดหน้าเดิม ใช้ทบทวน (ตัวเลขใหม่ แนวคิดเดิม) */
+function oneOfKind(kindId, lvl) {
+  var k = pageKind(kindId); if (!k) return null;
+  var it = k.one(lvl == null || lvl < 1 ? 1 : lvl);
+  it.key = 'PG:' + kindId; it.tag = kindId; it.cat = it.cat || TOPIC_CAT[k.topic || 'add']; it.tier = lvl || 1;
+  return it;
+}
+
+/* ======================= สถานะการหมุนเวียนและผลประเมิน ======================= */
+function rotInit() { return { topic: 'add', setNo: 1, repeat: false, weekNo: 1 }; }
+function rotRounds0() { return { add: 1, sub: 1, mul: 1, div: 1, frac: 1 }; }
+function nextTopic(topic) { return TOPICS[(TOPICS.indexOf(topic) + 1) % TOPICS.length]; }
+
+/**
+ * ตัดสินผลชุดที่ 6: sec = {mastered: แก้ถูกเองทุกข้อ(ไม่ดูเฉลย), totalSec}, x, y
+ * pass = 100% หลังแก้ และเวลา ≤ X / flag = 100% และ X < เวลา < Y / repeat = ไม่ถึง 100% หรือเวลา ≥ Y
+ */
+function assessOutcome(sec, x, y) {
+  if (!sec.mastered) return { outcome: 'repeat', reason: 'มีข้อที่ต้องดูเฉลย (ไม่ถึง 100% หลังแก้)' };
+  if (sec.totalSec >= y) return { outcome: 'repeat', reason: 'ใช้เวลา ' + fmtSec(sec.totalSec) + ' ถึงเกณฑ์สูงสุด ' + fmtSec(y) };
+  if (sec.totalSec > x) return { outcome: 'flag', reason: 'ผ่าน แต่ช้ากว่าเป้า ' + fmtSec(x) + ' (ใช้ ' + fmtSec(sec.totalSec) + ')' };
+  return { outcome: 'pass', reason: '' };
+}
+/**
+ * ตัวเลื่อนสถานะ (ฟังก์ชันล้วน): ทำเสร็จชุด setNo แล้ว → สถานะถัดไป
+ * result = {outcome} เฉพาะชุดที่ 6 ('pass'|'flag'|'repeat')
+ * ทำซ้ำได้ครั้งเดียวติดกัน: ซ้ำแล้วยังไม่ผ่านให้ไปหัวข้อถัดไป โดยรอบคงเดิม
+ */
+function rotAfterSet(rot, rounds, setNo, result) {
+  var r = { topic: rot.topic, setNo: rot.setNo, repeat: !!rot.repeat, weekNo: rot.weekNo || 1 }, rd = {}, k, event;
+  for (k in rounds) rd[k] = rounds[k];
+  if (setNo < ROT_SETS) { r.setNo = setNo + 1; return { rot: r, rounds: rd, event: 'next-set' }; }
+  var out = (result && result.outcome) || 'repeat';
+  r.weekNo = r.weekNo + 1;
+  if (out === 'pass' || out === 'flag') { rd[rot.topic] = (rd[rot.topic] || 1) + 1; r.topic = nextTopic(rot.topic); r.setNo = 1; r.repeat = false; event = 'advance'; }
+  else if (!rot.repeat) { r.setNo = 1; r.repeat = true; event = 'repeat'; }
+  else { r.topic = nextTopic(rot.topic); r.setNo = 1; r.repeat = false; event = 'moveon'; }
+  return { rot: r, rounds: rd, event: event, outcome: out };
+}
+/** ผลวัดระดับ (ขั้นเริ่มต้นของแต่ละบันไดเดิม) → รอบเริ่มต้นของแต่ละหัวข้อ */
+var ROUND_STEP_FROM = { add: [1, 5, 9], sub: [1, 5, 9], mul: [1, 3, 9], div: [1, 4, 8], frac: [1, 7, 14] };
+var TOPIC_LADDER = { add: 'addsub', sub: 'addsub', mul: 'mul', div: 'div', frac: 'fracdec' };
+function roundForStep(topic, stepNo) {
+  var th = ROUND_STEP_FROM[topic], r = 1;
+  for (var i = 0; i < th.length; i++) if (stepNo >= th[i]) r = i + 1;
+  return r;
+}
+function placementRounds(starts) {
+  var out = {};
+  TOPICS.forEach(function (t) { out[t] = roundForStep(t, Number(starts[TOPIC_LADDER[t]]) || 1); });
+  return out;
+}
+/** ข้อความสถานะ เช่น "รอบ 1 · สัปดาห์บวก · ชุด 3/6" */
+function rotLabel(topic, round, setNo, repeat) {
+  return 'รอบ ' + round + ' · สัปดาห์' + TOPIC_NAMES[topic] + ' · ชุด ' + setNo + '/' + ROT_SETS + (repeat ? ' (ทำซ้ำ)' : '');
+}
+
+/* ======================= ส่วน B/C: แม่แบบที่สอดคล้องกับหัวข้อประจำสัปดาห์ ======================= */
+var TPL_TOPICS = {
+  W01: ['add', 'sub', 'mul'], W02: ['add'], W03: ['div'], W04: ['add', 'mul'], W05: ['mul', 'div'], W06: ['add'], W07: ['add', 'mul'], W08: ['frac', 'mul', 'div'],
+  W09: ['frac'], W10: ['frac', 'sub'], W11: ['frac', 'mul'], W12: ['mul', 'sub'], W13: ['div', 'sub'], W14: ['add', 'sub', 'div'], W15: ['div', 'mul'], W16: ['mul', 'sub'],
+  W17: ['sub', 'add'], W18: ['add', 'mul', 'sub'], W19: ['div', 'sub'], W20: ['mul', 'sub'], W21: ['add', 'sub', 'mul'], W22: ['mul', 'add'],
+  O01: ['add'], O02: ['mul'], O03: ['add'], O04: ['add'], O05: ['sub'], O06: ['add'], O07: ['mul'], O09: ['add'], O10: ['mul', 'div'], O11: ['add'], O13: ['add'], O14: ['sub'],
+  O15: ['mul'], O16: ['mul'], O17: ['frac'], O18: ['add', 'sub'], O19: ['add'], O22: ['add'], O23: ['mul', 'div'],
+  A04: ['add', 'sub', 'mul'], A07: ['add', 'sub', 'mul', 'div'], A08: ['mul', 'div'], A09: ['add'], A10: ['div', 'add'], A11: ['mul'], A12: ['add', 'sub', 'div'], A13: ['mul', 'sub', 'div'],
+  A14: ['add', 'mul'], A15: ['div', 'add'], A16: ['sub', 'add'], A17: ['add', 'sub'], A18: ['add', 'sub'], A19: ['add', 'sub'], A20: ['mul', 'div', 'frac'], A21: ['div'], A22: ['div']
+};
+/** {รหัสแม่แบบ: 1} ของแม่แบบที่เหมาะกับหัวข้อ */
+function topicPrefer(topic) {
+  var o = {};
+  for (var id in TPL_TOPICS) if (TPL_TOPICS[id].indexOf(topic) >= 0) o[id] = 1;
+  return o;
+}
+
 // ======================= SetBuilder.gs =======================
 /**
  * SetBuilder.gs — ประกอบชุดข้อประจำวัน / แบบวัดระดับ (สัปดาห์แรก) / แบบวัดผลรายเดือน
@@ -1349,7 +1961,7 @@ function genTpl(cat, grp, tier, ctx, local, flags) {
   var ex = {}, k;
   for (k in (ctx.recentTpl || {})) ex[k] = 1;
   for (k in local) ex[k] = 1;
-  var id = pickTemplate(cat, grp, tier, ex);
+  var id = pickTemplate(cat, grp, tier, ex, ctx.topic ? topicPrefer(ctx.topic) : null);
   local[id] = 1;
   return flag(uniqueItem(function () { return buildTemplate(id, tier); }, ctx), flags || {});
 }
@@ -1380,8 +1992,9 @@ function pickFixed(ctx, cats, tier, flags, exceptCode) {
 
 /** สร้างข้อทบทวนจากรายการที่ถึงกำหนด (ตัวเลขใหม่ แนวคิดเดิม) */
 function regenReview(rv, ctx, local) {
-  var parts = String(rv.key).split(':'), kind = parts[0], id = parts[1], it = null, fl = { review: true, reviewId: rv.id };
-  if (kind === 'GEN' && STEP_BY_ID[id]) it = flag(uniqueItem(function () { return genStep(id); }, ctx), fl);
+  var km = /^(GEN|TPL|FIX|PG):(.+)$/.exec(String(rv.key)) || [], kind = km[1], id = km[2], it = null, fl = { review: true, reviewId: rv.id };
+  if (kind === 'PG' && pageKind(id)) it = flag(uniqueItem(function () { return oneOfKind(id, rv.tier || 1); }, ctx), fl);
+  else if (kind === 'GEN' && STEP_BY_ID[id]) it = flag(uniqueItem(function () { return genStep(id); }, ctx), fl);
   else if (kind === 'TPL' && TPL_BY_ID[id]) it = flag(uniqueItem(function () { return buildTemplate(id, rv.tier || 2); }, ctx), fl);
   else if (kind === 'FIX') {
     var row = fixedMap(ctx)[id];
@@ -1416,12 +2029,15 @@ function reviewIdsOf(sections) {
 
 /* ---------------- ชุดประจำวัน ---------------- */
 function buildDailySet(ctx) {
-  var L = ctx.levels, T3 = L.tiers, skill = ctx.skill, st = stepOf(skill, L[skill]), local = {};
-  var items = [], i;
-  for (i = 0; i < st.n; i++) items.push(flag(uniqueItem(function () { return genStep(st.id); }, ctx), { main: true }));
+  var T3 = ctx.levels.tiers, rot = ctx.rot, topic = rot.topic, round = planRound(ctx.rounds[topic]), setNo = rot.setNo, local = {};
+  ctx.topic = topic;
+  var b = buildASetItems(topic, round, setNo, ctx);
   var revA = takeReviews(ctx, SKILLS, MAX_REVIEW.A, local);
-  var A = mkSection('A', 'คิดเลขเร็ว', SKILL_NAMES[skill] + ' ขั้น ' + st.no + ': ' + st.name, 'drill', items.concat(revA),
-    { mainCount: items.length, targetSec: st.n * st.spp, graded: true, stepId: st.id, skill: skill, stepNo: st.no });
+  var xSec = Math.round(b.xSec * (ctx.targetMult || 1)), ySec = Math.round(xSec * (ctx.yFactor || 1.5)), assess = setNo === ROT_SETS;
+  var pages = b.pages.slice();
+  if (revA.length) pages.push({ n: revA.length, start: b.items.length, kind: 'review', label: 'ทบทวนข้อที่เคยพลาด', title: 'ทบทวนข้อที่เคยพลาด (ไม่นับในการประเมิน)', lvl: 0, pattern: false, observe: null });
+  var A = mkSection('A', 'คิดเลขเร็ว', rotLabel(topic, round, setNo, rot.repeat) + ' · ' + SET_KIND_LABEL[setNo], 'drill', b.items.concat(revA),
+    { mainCount: b.items.length, pages: pages, targetSec: xSec, graded: assess, assessment: assess, topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, weekNo: rot.weekNo, xSec: xSec, ySec: ySec, skill: TOPIC_CAT[topic] });
 
   // B การสังเกต
   var bSlots = ['seq', 'seq', 'vis', 'odd', 'err', 'FIX'];
@@ -1447,7 +2063,7 @@ function buildDailySet(ctx) {
   var C = mkSection('C', 'คิดวิเคราะห์', 'โจทย์หลายขั้นตอน ตาราง/แผนภูมิ ปริศนาตรรกะ', 'plain', cItems, { recSec: 540, graded: false });
   var secs = [A, B, C];
   return { mode: 'daily', title: 'ชุดฝึกประจำวัน', sections: secs, reviewIds: reviewIdsOf(secs),
-    meta: { skill: skill, stepId: st.id, stepNo: st.no, stepName: st.name } };
+    meta: { topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, assessment: assess, xSec: xSec, ySec: ySec } };
 }
 function shuffleKeepReviewLast(arr) {
   var a = arr.filter(function (x) { return !x.review; }), r = arr.filter(function (x) { return x.review; });
@@ -1552,7 +2168,7 @@ function selfTestAll(ok) {
   // ----- ชุดข้อ -----
   function mkCtx(extra) {
     var c = { levels: { addsub: 3, mul: 1, div: 1, fracdec: 1, tiers: { word: 2, observe: 2, analytic: 2 } }, skill: 'addsub',
-      usedSigs: {}, recentTpl: {}, bank: bankRows, bankUsed: {}, reviews: [] };
+      usedSigs: {}, recentTpl: {}, bank: bankRows, bankUsed: {}, reviews: [], rot: rotInit(), rounds: rotRounds0() };
     for (var k in (extra || {})) c[k] = extra[k];
     return c;
   }
@@ -1561,9 +2177,10 @@ function selfTestAll(ok) {
   setRng(mulberry32(12345));
   var d2 = buildDailySet(mkCtx());
   ok(JSON.stringify(d1) === JSON.stringify(d2), 'ชุดข้อวันเดียวกัน (seed เดียวกัน) ต้องออกเหมือนเดิม');
-  var A = d1.sections[0], B = d1.sections[1], C = d1.sections[2], st = stepOf('addsub', 3);
-  ok(A.mainCount === st.n && A.items.length === st.n && A.targetSec === st.n * st.spp, 'ส่วน A มี ' + st.n + ' ข้อ ขั้นเดียวกันทั้งหมด');
-  ok(A.items.every(function (x) { return x.tag === st.id; }), 'ทุกข้อใน A เป็นขั้นเดียวกัน');
+  var A = d1.sections[0], B = d1.sections[1], C = d1.sections[2], plan0 = setPlan('add', 1, 1);
+  ok(A.mainCount === 100 && A.items.length === 100 && A.targetSec === setXSec('add', 1, 1) && A.topic === 'add' && A.setNo === 1, 'ส่วน A ชุดที่ 1 สัปดาห์บวก รอบ 1 มี 100 ข้อ (ได้ ' + A.items.length + ')');
+  ok(A.items.every(function (x) { return x.topic === 'add' && x.page >= 1 && x.key.indexOf('PG:') === 0; }) && A.pages.length === 10, 'ทุกข้อใน A เป็นหัวข้อบวก แบ่งเป็น 10 หน้า');
+  ok(d1.meta.topic === 'add' && d1.meta.round === 1 && d1.meta.setNo === 1 && d1.meta.xSec === A.targetSec && d1.meta.ySec > d1.meta.xSec, 'meta ของชุดมีหัวข้อ/รอบ/ชุด/X/Y');
   ok(B.items.length === DAILY_B_COUNT && C.items.length === DAILY_C_COUNT, 'B/C มีข้อครบ');
   ok(B.items.every(function (x) { return x.cat === 'observe'; }), 'B เป็นหมวดการสังเกต');
   ok(C.items.every(function (x) { return x.cat === 'word' || x.cat === 'analytic'; }), 'C เป็นโจทย์ปัญหา/คิดวิเคราะห์');
@@ -1574,12 +2191,12 @@ function selfTestAll(ok) {
 
   // ทบทวนแบบเว้นช่วง: ข้อที่ผิดกลับมาด้วยตัวเลขใหม่ แนวคิดเดิม
   setRng(mulberry32(7));
-  var rv = [{ id: 'r1', key: 'GEN:AS02', cat: 'addsub' }, { id: 'r0', key: 'GEN:AS07', cat: 'addsub' }, { id: 'r2', key: 'TPL:W05', cat: 'word', tier: 2 }, { id: 'r3', key: 'TPL:O13', cat: 'observe', tier: 2 }, { id: 'r4', key: 'FIX:F40', cat: 'analytic' }];
+  var rv = [{ id: 'r1', key: 'PG:add.pairs10', cat: 'addsub', tier: 1 }, { id: 'r0', key: 'GEN:AS07', cat: 'addsub' }, { id: 'r2', key: 'TPL:W05', cat: 'word', tier: 2 }, { id: 'r3', key: 'TPL:O13', cat: 'observe', tier: 2 }, { id: 'r4', key: 'FIX:F40', cat: 'analytic' }];
   var d3 = buildDailySet(mkCtx({ reviews: rv }));
   var allItems = [].concat.apply([], d3.sections.map(function (s) { return s.items; }));
   var revItems = allItems.filter(function (x) { return x.review; });
   ok(revItems.length === 4, 'ข้อทบทวนต้องเข้ามาครบ 4 ข้อ (ได้ ' + revItems.length + ')');
-  ok(revItems.some(function (x) { return x.key === 'GEN:AS02'; }) && revItems.some(function (x) { return x.key === 'TPL:W05'; }) && revItems.some(function (x) { return x.key === 'TPL:O13'; }), 'ทบทวนแนวคิดเดิม');
+  ok(revItems.some(function (x) { return x.key === 'PG:add.pairs10'; }) && revItems.some(function (x) { return x.key === 'TPL:W05'; }) && revItems.some(function (x) { return x.key === 'TPL:O13'; }), 'ทบทวนแนวคิดเดิม');
   ok(d3.reviewIds.length === 4 && d3.reviewIds.indexOf('r0') < 0, 'รายการ reviewIds ต้องครบ และข้อทบทวนของขั้นที่ยังไม่ถึง (AS07 ขณะที่ระดับ = 3) ต้องรอไว้ก่อน');
   ok(d3.sections[1].items.length === DAILY_B_COUNT && d3.sections[2].items.length === DAILY_C_COUNT, 'ข้อทบทวนต้องไม่ทำให้จำนวนข้อ B/C เกิน');
 
@@ -1643,10 +2260,13 @@ function dashDailyList(rows) {
   }
   return rows.filter(function (r) { return r[0]; }).map(function (r) {
     var A = sec(r, 4), B = sec(r, 12), C = sec(r, 19), daily = r[1] === 'ประจำวัน';
+    var pages = String(r[33] || '').split(',').filter(function (x) { return x !== ''; }).map(Number);
     return { date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
+      slot: Number(r[28]) === 2 ? 2 : 1, topic: String(r[29] || ''), round: Number(r[30]) || 0, setNo: Number(r[31]) || 0, outcome: String(r[32] || ''), pagesSec: pages,
+      x: Number(r[34]) || 0, y: Number(r[35]) || 0, repeat: String(r[36] || '') === 'ซ้ำ',
       totalMin: Number(r[26]) || 0, note: String(r[27] || ''), aPct: dashPct(A.right, A.total), bPct: dashPct(B.right, B.total), cPct: dashPct(C.right, C.total),
       ratio: daily && A.target ? dashRound1(A.totalSec / A.target * 100) : null };
-  }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+  }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.slot - b.slot; });
 }
 
 /** จำนวนวันที่ทำติดต่อกัน นับเฉพาะวันที่ตั้งไว้ว่าฝึก (วันพักข้ามได้) ถ้าวันนี้ยังไม่ทำ ไม่ถือว่าขาด */
@@ -1678,7 +2298,7 @@ function dashCalendar(passMap, today, startDate, practiceDays, weeks) {
   var end = ymdAdd(today, 6 - ymdDow(today)), begin = ymdAdd(end, -(weeks * 7 - 1)), out = [];
   for (var i = 0; i < weeks * 7; i++) {
     var d = ymdAdd(begin, i), p = passMap[d], st;
-    if (p !== undefined) st = p === 'ผ่าน' ? 'pass' : p === 'ไม่ผ่าน' ? 'fail' : 'done';
+    if (p !== undefined) st = String(p).indexOf('ผ่าน') === 0 ? 'pass' : p === 'ไม่ผ่าน' ? 'fail' : 'done';
     else if (d > today) st = 'future';
     else if (startDate && d < startDate) st = 'before';
     else if (d === today) st = 'today';
@@ -1695,6 +2315,7 @@ function dashTagLabel(key) {
   if (kind === 'GEN' && typeof STEP_BY_ID !== 'undefined' && STEP_BY_ID[id]) { var s = STEP_BY_ID[id]; return SKILL_NAMES[s.skill] + ' ขั้น ' + s.no + ' · ' + s.name; }
   if (kind === 'TPL' && typeof TPL_BY_ID !== 'undefined' && TPL_BY_ID[id]) return CAT_NAMES[TPL_BY_ID[id].cat] + ' · แบบ ' + id;
   if (kind === 'FIX') return 'ข้อจากคลังข้อสอบ ' + id;
+  if (kind === 'PG' && typeof PAGE_KINDS !== 'undefined' && PAGE_KINDS[id]) return TOPIC_NAMES[PAGE_KINDS[id].topic] + ' · ' + PAGE_KINDS[id].label;
   return String(key);
 }
 
@@ -1721,21 +2342,32 @@ function dashErrorStats(itemRows, fromYmd) {
   return { total: total, wrong: wrongTotal, types: typeList, cats: catList, tags: tagList };
 }
 
-/** ความคืบหน้าของแต่ละทักษะจากแท็บ "ระดับปัจจุบัน" */
-function dashSkillProgress(L) {
-  return SKILLS.map(function (sk) {
-    var n = skillSteps(sk).length, no = L[sk], st = stepOf(sk, no);
-    return { skill: sk, name: SKILL_NAMES[sk], step: no, total: n, stepName: st.name, fails: (L.fails && L.fails[sk]) || 0, pct: Math.round((no - 1) / n * 100) };
+/** สถานะของแต่ละหัวข้อจากแท็บ "รอบหัวข้อ": รอบปัจจุบัน, หัวข้อ/ชุดที่กำลังทำ, ผลสัปดาห์ล่าสุด */
+function dashTopicProgress(rs) {
+  return TOPICS.map(function (t) {
+    var cur = rs.rot.topic === t, h = rs.hist[t] || { weeks: 0, last: '', date: '' };
+    return { topic: t, name: TOPIC_NAMES[t], round: rs.rounds[t], current: cur, setNo: cur ? rs.rot.setNo : 0, repeat: cur ? !!rs.rot.repeat : false, weeks: h.weeks, last: h.last, lastDate: h.date,
+      pct: cur ? Math.round((rs.rot.setNo - 1) / ROT_SETS * 100) : 0 };
   });
+}
+/** แนวโน้มเวลาของชุดประเมิน (ชุดที่ 6) ต่อหัวข้อ เทียบรอบ 1 กับรอบ 2: [{topic,name,points:[{round,date,totalSec,x,ratio,outcome}]}] */
+function dashTopicTrend(list) {
+  var by = {};
+  list.forEach(function (d) {
+    if (d.mode !== 'ประจำวัน' || d.setNo !== ROT_SETS || !d.topic) return;
+    (by[d.topic] = by[d.topic] || []).push({ round: d.round, date: d.date, totalSec: d.A.totalSec, x: d.x, ratio: d.x ? dashRound1(d.A.totalSec / d.x * 100) : null, outcome: d.pass, repeat: d.repeat });
+  });
+  return TOPICS.map(function (t) { return { topic: t, name: TOPIC_NAMES[t], points: by[TOPIC_NAMES[t]] || [] }; });
 }
 
 /** ชุดข้อมูลกราฟจากแท็บ "ความก้าวหน้า": [วันที่, A%, B%, C%, เวลา÷เป้า, ขั้น×4] */
 function dashSeries(progressRows) {
-  var s = { dates: [], a: [], b: [], c: [], ratio: [], steps: { addsub: [], mul: [], div: [], fracdec: [] } };
+  var s = { dates: [], a: [], b: [], c: [], ratio: [], rounds: {} };
+  TOPICS.forEach(function (t) { s.rounds[t] = []; });
   function num(v) { return v === '' || v == null ? null : Number(v); }
   progressRows.filter(function (r) { return r[0]; }).forEach(function (r) {
     s.dates.push(String(r[0])); s.a.push(num(r[1])); s.b.push(num(r[2])); s.c.push(num(r[3])); s.ratio.push(num(r[4]));
-    SKILLS.forEach(function (sk, i) { s.steps[sk].push(num(r[5 + i])); });
+    TOPICS.forEach(function (t, i) { s.rounds[t].push(num(r[5 + i])); });
   });
   return s;
 }
@@ -1746,10 +2378,11 @@ function dashAlerts(x) {
   if (!x.startDate) out.push({ level: 'warn', text: 'ยังไม่ได้ตั้งวันเริ่ม (START_DATE) ในแท็บตั้งค่า' });
   else if (x.today < x.startDate) out.push({ level: 'info', text: 'ยังไม่ถึงวันเริ่ม (' + x.startDate + ')' });
   if (x.placement && !x.placement.done && x.startDate && x.today >= x.startDate) out.push({ level: 'info', text: 'อยู่ระหว่างแบบวัดระดับ ทำแล้ว ' + x.placement.days + ' จาก ' + x.placement.of + ' วัน' });
-  SKILLS.forEach(function (sk) {
-    var f = (x.fails && x.fails[sk]) || 0;
-    if (f >= x.maxRepeats) out.push({ level: 'warn', text: 'ติดขั้นเดิมของ' + SKILL_NAMES[sk] + ' (ขั้น ' + x.levels[sk] + ') มา ' + f + ' ครั้งติดกัน ควรนั่งดูวิธีคิดกับลูก' });
-  });
+  if (x.rot) out.push({ level: 'info', text: 'ตอนนี้: ' + rotLabel(x.rot.topic, x.rot.round, x.rot.setNo, x.rot.repeat) });
+  if (x.rot && x.rot.repeat) out.push({ level: 'warn', text: 'สัปดาห์' + TOPIC_NAMES[x.rot.topic] + 'เป็นการทำซ้ำ (สัปดาห์ก่อนยังไม่ผ่านการประเมิน) ถ้าชุดที่ 6 ไม่ผ่านอีก ระบบจะไปหัวข้อถัดไป ควรนั่งดูวิธีคิดกับลูก' });
+  var lastAssess = (x.list || []).filter(function (d) { return d.mode === 'ประจำวัน' && d.setNo === ROT_SETS; }).slice(-1)[0];
+  if (lastAssess && lastAssess.pass === 'ผ่าน(ช้า)') out.push({ level: 'info', text: '⚑ สัปดาห์' + lastAssess.topic + 'ล่าสุดผ่านแต่ช้ากว่าเป้า (ใช้ ' + fmtSec(lastAssess.A.totalSec) + ' เป้า ' + fmtSec(lastAssess.x) + ')' });
+  if (lastAssess && lastAssess.pass === 'ไม่ผ่าน') out.push({ level: 'warn', text: 'สัปดาห์' + lastAssess.topic + 'ล่าสุดยังไม่ผ่านการประเมิน (' + (lastAssess.repeat ? 'ซ้ำแล้ว ระบบไปต่อหัวข้อถัดไป' : 'ต้องทำซ้ำ') + ')' });
   if (x.missed >= 2) out.push({ level: 'warn', text: 'ไม่ได้ฝึกมา ' + x.missed + ' วันฝึกติดต่อกัน' });
   var recent = (x.list || []).filter(function (d) { return d.mode === 'ประจำวัน'; }).slice(-3);
   if (recent.length === 3) {
@@ -1761,7 +2394,7 @@ function dashAlerts(x) {
   if ((x.dueReviews || 0) >= 8) out.push({ level: 'info', text: 'มีข้อทบทวนครบกำหนด ' + x.dueReviews + ' ข้อ (ระบบทยอยใส่ในชุดวันละไม่เกิน 8 ข้อ)' });
   (x.lowBank || []).forEach(function (b) { out.push({ level: 'warn', text: 'คลังข้อสอบหมวด "' + b.cat + '" เหลือข้อสด ' + b.fresh + ' ข้อ ควรเพิ่มข้อใหม่' }); });
   if (x.streak >= 5) out.push({ level: 'good', text: 'ทำติดต่อกัน ' + x.streak + ' วันแล้ว เยี่ยมมาก!' });
-  if (x.todayDone) out.push({ level: 'good', text: 'วันนี้ลูกทำเสร็จแล้ว' + (x.todayPass === 'ผ่าน' ? ' และผ่านขั้นของส่วน A' : '') });
+  if (x.todayDone) out.push({ level: 'good', text: 'วันนี้ลูกทำเสร็จแล้ว' + (String(x.todayPass || '').indexOf('ผ่าน') === 0 ? ' และผ่านการประเมินสัปดาห์' : '') });
   return out;
 }
 
@@ -1775,9 +2408,11 @@ function dashRadar(model) {
 function dashMonthStats(list, month) {
   var m = list.filter(function (d) { return d.date.slice(0, 7) === month; });
   var daily = m.filter(function (d) { return d.mode === 'ประจำวัน'; });
-  var passN = daily.filter(function (d) { return d.pass === 'ผ่าน'; }).length;
+  var assess = daily.filter(function (d) { return d.pass && d.pass !== '-'; });
+  var passN = assess.filter(function (d) { return d.pass.indexOf('ผ่าน') === 0; }).length;
   var avgA = daily.length ? dashRound1(daily.reduce(function (s, d) { return s + (d.aPct || 0); }, 0) / daily.length) : null;
-  return { days: m.length, dailyCount: daily.length, passN: passN, avgA: avgA };
+  var uniq = {}; m.forEach(function (d) { uniq[d.date] = 1; });
+  return { days: Object.keys(uniq).length, sets: m.length, dailyCount: daily.length, assessCount: assess.length, passN: passN, avgA: avgA };
 }
 
 // ======================= Store.gs =======================
@@ -1787,7 +2422,7 @@ function dashMonthStats(list, month) {
  */
 var SH = {
   settings: 'ตั้งค่า', bank: 'คลังข้อสอบ', daily: 'ผลรายวัน', items: 'ผลรายข้อ', levels: 'ระดับปัจจุบัน',
-  review: 'ทบทวน', progress: 'ความก้าวหน้า', report: 'รายงานรายเดือน', bench: 'ข้อมูลวัดผล'
+  review: 'ทบทวน', rotation: 'รอบหัวข้อ', progress: 'ความก้าวหน้า', report: 'รายงานรายเดือน', bench: 'ข้อมูลวัดผล'
 };
 
 /** [คีย์, ค่าเริ่มต้น, คำอธิบาย] — ผู้ปกครองแก้ในแท็บ "ตั้งค่า" ได้เลย */
@@ -1800,6 +2435,7 @@ var DEFAULT_SETTINGS = [
   ['MAX_REPEATS', 3, 'ถ้าทำขั้นเดิมไม่ผ่านติดกันกี่ครั้ง ให้สลับไปฝึกทักษะอื่นก่อน (และแจ้งผู้ปกครอง)'],
   ['PLACEMENT_BACKOFF', 1, 'หลังวัดระดับ ถอยกลับกี่ขั้นเพื่อเริ่มจากระดับที่คล่อง'],
   ['DELTA_THRESHOLD', 3, 'เปลี่ยนแปลงไม่เกินกี่ % ถือว่า "เท่าเดิม" (สีเทา) ในรายงานรายเดือน'],
+  ['ASSESS_Y_FACTOR', 1.5, 'ชุดที่ 6 (ประเมินผลประจำสัปดาห์): เวลาสูงสุด Y = เวลาเป้าหมาย X × ค่านี้ — ใช้เวลา ≤ X = ผ่าน, ระหว่าง X–Y = ผ่านแต่ติดธงในอีเมล, ≥ Y หรือไม่ถึง 100% หลังแก้ = ทำหัวข้อเดิมซ้ำ 1 สัปดาห์'],
   ['TARGET_MULTIPLIER', 1, 'ปรับเวลาเป้าหมายของส่วน A ในชุดประจำวัน: 1 = ตามที่ตั้งไว้, 1.2 = ให้เวลามากขึ้น 20%, 0.9 = เข้มขึ้น 10% (ไม่มีผลกับแบบวัดระดับ/แบบวัดผล)'],
   ['PARENT_PIN', '', 'รหัสเข้า Dashboard ผู้ปกครอง (ตัวเลขหรือตัวอักษรก็ได้ ตั้งเอง) — ถ้าเว้นว่าง Dashboard จะเข้าไม่ได้ ลิงก์: ลิงก์เว็บแอป + ?page=dashboard'],
   ['DASH_GREEN', 85, 'Dashboard: ตั้งแต่กี่ % ถือว่า 🟢 ดี'],
@@ -1838,8 +2474,9 @@ function getSettings() {
     });
   }
   cfg.START_DATE = cellToYmd(cfg.START_DATE);
-  ['DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
+  ['ASSESS_Y_FACTOR', 'DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
   if (!(cfg.TARGET_MULTIPLIER > 0)) cfg.TARGET_MULTIPLIER = 1;
+  if (!(cfg.ASSESS_Y_FACTOR > 1)) cfg.ASSESS_Y_FACTOR = 1.5;
   if (!(cfg.DASH_GREEN > 0)) cfg.DASH_GREEN = 85;
   if (!(cfg.DASH_YELLOW > 0)) cfg.DASH_YELLOW = 60;
   cfg.PARENT_PIN = cfg.PARENT_PIN == null ? '' : String(cfg.PARENT_PIN);
@@ -1876,7 +2513,7 @@ function cleanChildName(v) { return String(v == null ? '' : v).replace(/[<>&"']/
 function setState(st) { props().setProperty('STATE', JSON.stringify(st)); }
 
 /* ---------------- ระดับปัจจุบัน ---------------- */
-var LEVEL_HEAD = ['ทักษะ', 'ขั้นปัจจุบัน (แก้เองได้)', 'ชื่อขั้น', 'เวลาเป้าหมาย (วินาที)', 'ขั้นเริ่มต้นจากวัดระดับ', 'ทำไม่ผ่านติดกัน', 'ทำล่าสุด', 'หมายเหตุ'];
+var LEVEL_HEAD = ['ทักษะ (บันไดวัดระดับ)', 'ขั้นล่าสุดจากวัดระดับ (อ้างอิง)', 'ชื่อขั้น', 'เวลาเป้าหมาย (วินาที)', 'ขั้นเริ่มต้นจากวัดระดับ', 'ทำไม่ผ่านติดกัน', 'ทำล่าสุด', 'หมายเหตุ'];
 var TIER_ROWS = [['โจทย์ปัญหา (ระดับ 1-4)', 'word'], ['การสังเกต (ระดับ 1-4)', 'observe'], ['คิดวิเคราะห์ (ระดับ 1-4)', 'analytic']];
 
 function readLevels() {
@@ -1941,7 +2578,7 @@ function touchBankUsed(codes, date) {
 }
 
 /* ---------------- ประวัติข้อ (กันโจทย์ซ้ำ + สถิติ) ---------------- */
-var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)'];
+var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)', 'หน้า'];
 function readItemRows(maxRows) {
   var sh = getSheet(SH.items), last = sh.getLastRow();
   if (last < 2) return [];
@@ -1950,8 +2587,17 @@ function readItemRows(maxRows) {
     r[0] = cellToYmd(r[0]); return r;
   });
 }
+/** อ่านแถวผลรายข้อตั้งแต่วันที่ cutoff (yyyy-MM-dd) เป็นต้นไป — อ่านเฉพาะคอลัมน์วันที่ก่อนเพื่อหาจุดเริ่ม (ชุดละ ~110 แถว/วัน จึงไม่อ่านตามจำนวนแถวตายตัว) */
+function readItemRowsSince(cutoff) {
+  var sh = getSheet(SH.items), last = sh.getLastRow();
+  if (last < 2) return [];
+  var dates = sh.getRange(2, 1, last - 1, 1).getValues(), start = 2;
+  for (var i = dates.length - 1; i >= 0; i--) { if (cellToYmd(dates[i][0]) < cutoff) { start = i + 3; break; } }
+  if (start > last) return [];
+  return sh.getRange(start, 1, last - start + 1, ITEM_HEAD.length).getValues().map(function (r) { r[0] = cellToYmd(r[0]); return r; });
+}
 function historyContext(today) {
-  var rows = readItemRows(4000), ctx = { usedSigs: {}, recentTpl: {}, bankUsed: {} };
+  var rows = readItemRowsSince(ymdAdd(today, -Math.max(60, (getSettings().BANK_RECENT_DAYS || 45) + 7))), ctx = { usedSigs: {}, recentTpl: {}, bankUsed: {} };
   rows.forEach(function (r) {
     var d = r[0], key = String(r[4]), diff = ymdDiff(today, d);
     if (diff <= 30 && diff >= 0) ctx.usedSigs[String(r[6])] = 1;
@@ -2006,12 +2652,20 @@ function countPendingReviews() {
 
 /* ---------------- ผลรายวัน ---------------- */
 function sectionCols(p) { return [p + ' คะแนนรอบแรก', p + ' เต็ม', p + ' เวลารอบแรก (วิ)', p + ' เวลารวมรวมแก้ (วิ)', p + ' เวลาเป้าหมาย/แนะนำ (วิ)', p + ' รอบแก้', p + ' ข้อผิดพลาด']; }
-var DAILY_HEAD = ['วันที่', 'ประเภท', 'A ทักษะ', 'A ขั้น'].concat(sectionCols('A'), ['A ผ่าน?'], sectionCols('B'), sectionCols('C'), ['เวลารวม (นาที)', 'สรุป']);
+var DAILY_HEAD = ['วันที่', 'ประเภท', 'A ทักษะ', 'A ขั้น'].concat(sectionCols('A'), ['A ผ่าน?'], sectionCols('B'), sectionCols('C'), ['เวลารวม (นาที)', 'สรุป'],
+  ['ชุดในวัน (1=ปกติ 2=ชดเชย)', 'หัวข้อ', 'รอบ', 'ชุดที่ (1-6)', 'ผลประเมินสัปดาห์', 'เวลาแต่ละหน้า A (วินาที)', 'เป้าหมาย X (วินาที)', 'เกณฑ์สูงสุด Y (วินาที)', 'ทำซ้ำสัปดาห์นี้?']);
+/** ตำแหน่งคอลัมน์ที่เพิ่มต่อท้ายใน "ผลรายวัน" */
+var DC = { slot: 28, topic: 29, round: 30, setNo: 31, outcome: 32, pages: 33, x: 34, y: 35, repeat: 36 };
+function slotOfRow(r) { return Number(r[DC.slot]) === 2 ? 2 : 1; }
 function readDailyRows(maxRows) {
   var sh = getSheet(SH.daily), last = sh.getLastRow();
   if (last < 2) return [];
   var start = Math.max(2, last - maxRows + 1);
   return sh.getRange(start, 1, last - start + 1, DAILY_HEAD.length).getValues().map(function (r) { r[0] = cellToYmd(r[0]); return r; });
+}
+/** แถวผลรายวันทั้งหมดของวันนั้น (ชุดปกติ + ชุดชดเชย) */
+function findDailyRows(date) {
+  return readDailyRows(400).filter(function (r) { return r[0] === date; });
 }
 function findDailyRow(date) {
   var rows = readDailyRows(400);
@@ -2036,12 +2690,53 @@ function appendBench(period, date, stats) {
   sh.getRange(sh.getLastRow() + 1, 1, rows.length, BENCH_HEAD.length).setValues(rows);
 }
 
+/* ---------------- สถานะการหมุนเวียนหัวข้อ (แท็บ "รอบหัวข้อ") ---------------- */
+var ROT_HEAD = ['หัวข้อ', 'รอบปัจจุบัน (แก้เองได้)', 'ทำครบสัปดาห์แล้ว (ครั้ง)', 'ผลสัปดาห์ล่าสุด', 'วันที่'];
+function topicByName(n) { for (var i = 0; i < TOPICS.length; i++) if (TOPIC_NAMES[TOPICS[i]] === String(n).trim()) return TOPICS[i]; return null; }
+function clampInt(v, lo, hi, d) { v = Math.floor(Number(v)); return isNaN(v) ? d : Math.max(lo, Math.min(hi, v)); }
+function ensureRotationSheet() {
+  var sh = getSheet(SH.rotation);
+  if (sh.getLastRow() < 1) {
+    sh.getRange('E:E').setNumberFormat('@');
+    sh.getRange(1, 1, 1, ROT_HEAD.length).setValues([ROT_HEAD]);
+    var seed = rotRounds0();
+    try { if (getState().placementDone) seed = placementRounds(readLevels()); } catch (e) { seed = rotRounds0(); }  // อัปเกรดจากเวอร์ชันเดิม: ใช้ผลวัดระดับที่มีอยู่แล้ว
+    sh.getRange(2, 1, TOPICS.length, 5).setValues(TOPICS.map(function (t) { return [TOPIC_NAMES[t], seed[t], 0, '', '']; }));
+    sh.getRange(8, 1, 4, 2).setValues([['หัวข้อสัปดาห์นี้', TOPIC_NAMES.add], ['ชุดถัดไป (1-6)', 1], ['สัปดาห์นี้เป็นการทำซ้ำ (ใช่ / ไม่ใช่)', 'ไม่ใช่'], ['สัปดาห์ที่ (นับรวมทุกหัวข้อ)', 1]]);
+  }
+  return sh;
+}
+/** อ่านสถานะ: {rot:{topic,setNo,repeat,weekNo}, rounds:{add..frac}, hist:{topic:{weeks,last,date}}} (ค่าที่ผู้ปกครองแก้ในชีตมีผลทันที) */
+function readRotation() {
+  var sh = ensureRotationSheet(), v = sh.getRange(2, 1, 10, 5).getValues(), rounds = {}, hist = {};
+  TOPICS.forEach(function (t, i) {
+    rounds[t] = clampInt(v[i][1], 1, 99, 1);
+    hist[t] = { weeks: Number(v[i][2]) || 0, last: String(v[i][3] || ''), date: cellToYmd(v[i][4]) };
+  });
+  return { rot: { topic: topicByName(v[6][1]) || 'add', setNo: clampInt(v[7][1], 1, ROT_SETS, 1), repeat: String(v[8][1]).trim() === 'ใช่', weekNo: clampInt(v[9][1], 1, 9999, 1) }, rounds: rounds, hist: hist };
+}
+/** เขียนสถานะ; weekResult = {topic, text, date} เมื่อจบสัปดาห์ (บันทึกผลของหัวข้อนั้น) */
+function writeRotation(rot, rounds, weekResult) {
+  var sh = ensureRotationSheet();
+  sh.getRange(2, 2, TOPICS.length, 1).setValues(TOPICS.map(function (t) { return [rounds[t]]; }));
+  sh.getRange(8, 2, 4, 1).setValues([[TOPIC_NAMES[rot.topic]], [rot.setNo], [rot.repeat ? 'ใช่' : 'ไม่ใช่'], [rot.weekNo]]);
+  if (weekResult) {
+    var i = TOPICS.indexOf(weekResult.topic), r = sh.getRange(2 + i, 3, 1, 3), cur = r.getValues()[0];
+    r.setValues([[(Number(cur[0]) || 0) + 1, weekResult.text, weekResult.date]]);
+  }
+}
+
 // ======================= Session.gs =======================
 /**
- * Session.gs — ฟังก์ชันที่หน้าเว็บ (Index.html) เรียก: getTodaySet / submitSection / submitSession
- * ตัดสินว่าวันนี้ทำชุดอะไร (วัดระดับ / ประจำวัน / วัดผลรายเดือน) และอัปเดตระดับหลังทำเสร็จ
+ * Session.gs — ฟังก์ชันที่หน้าเว็บ (Index.html) เรียก: getTodaySet / getCatchupSet / submitSection / submitSession
+ * ตัดสินว่าวันนี้ทำชุดอะไร (วัดระดับ / ประจำวัน / วัดผลรายเดือน) และเลื่อนสถานะ "สัปดาห์ละเรื่อง" หลังทำเสร็จ
+ *
+ * ส่วน A ประจำวัน = หัวข้อละ 6 ชุด (บวก→ลบ→คูณ→หาร→เศษส่วน) นับตามจำนวน "ชุดที่ทำเสร็จ" ไม่ใช่ตามปฏิทิน
+ *   วันไหนไม่ได้ทำ เนื้อหาไม่ข้าม · ทำชุดชดเชยได้ (ไม่บังคับ) รวมไม่เกิน 2 ชุดต่อวัน
+ *   ชุดที่ 6 = ประเมินผล: ผ่าน / ผ่านแต่ช้า (ติดธง) / ทำหัวข้อเดิมซ้ำ 1 ครั้ง (ซ้ำแล้วยังไม่ผ่านก็ไปต่อ)
  */
 var PLACEMENT_DAYS = 5;
+var MAX_SETS_PER_DAY = 2;
 
 function nextPlacementDay(st) { return st.placementDays.length; }
 
@@ -2059,25 +2754,47 @@ function decideMode(today, cfg, st) {
   return { status: 'ready', mode: 'daily' };
 }
 
-function getTodaySet() {
+/**
+ * ชุดชดเชย (ไม่บังคับ): ได้เมื่อวันนี้ทำชุดปกติ (ประจำวัน) แล้ว ยังทำชดเชยไม่ครบ 2 ชุด
+ * และสัปดาห์หัวข้อที่ทำอยู่ยังไม่จบ (ชุดปกติของวันนี้ไม่ใช่ชุดที่ 6) — วันวัดระดับ/วัดผลไม่มีชดเชย
+ */
+function catchupState(rows, rs) {
+  var s1 = rows.filter(function (r) { return slotOfRow(r) === 1; })[0];
+  if (!s1 || rows.length >= MAX_SETS_PER_DAY) return { available: false };
+  if (String(s1[1]) !== 'ประจำวัน') return { available: false };
+  var done = Number(s1[DC.setNo]) || 0;
+  if (!(done >= 1 && done < ROT_SETS)) return { available: false };
+  var rot = rs.rot;
+  return { available: true, remaining: ROT_SETS - done, next: rotLabel(rot.topic, planRound(rs.rounds[rot.topic]), rot.setNo, rot.repeat) };
+}
+
+function getCatchupSet() { return getTodaySet({ catchup: true }); }
+
+function getTodaySet(req) {
   try {
-    var today = todayYmd(), cfg = getSettings(), st = getState();
-    var done = findDailyRow(today);
-    if (done) return { status: 'done', date: today, child: childLabel(), summary: doneSummaryFromRow(done) };
-    var dm = decideMode(today, cfg, st);
+    var wantCatch = !!(req && req.catchup);
+    var today = todayYmd(), cfg = getSettings(), st = getState(), rows = findDailyRows(today), rs = readRotation();
+    var s1 = rows.filter(function (r) { return slotOfRow(r) === 1; })[0];
+    var cu = catchupState(rows, rs);
+    if (s1 && !(wantCatch && cu.available)) {
+      return { status: 'done', date: today, child: childLabel(), summary: doneSummaryFromRow(rows[rows.length - 1]), summaries: rows.map(doneSummaryFromRow), catchup: cu.available ? cu : null };
+    }
+    if (wantCatch && !cu.available) return { status: 'error', message: 'วันนี้ทำชุดชดเชยไม่ได้ (ทำได้วันละไม่เกิน 2 ชุด และเฉพาะเมื่อสัปดาห์ยังเหลือชุด)' };
+    var dm = wantCatch ? { status: 'ready', mode: 'daily' } : decideMode(today, cfg, st);
     if (dm.status !== 'ready') return { status: dm.status, date: today, child: childLabel(), startDate: dm.startDate || '' };
-    if (dm.needFinalize) { finalizePlacement(today); st = getState(); }
-    var L = readLevels(), hist = historyContext(today);
-    var ctx = { levels: L, skill: SKILLS[st.nextSkill % SKILLS.length], usedSigs: hist.usedSigs, recentTpl: hist.recentTpl, bankUsed: hist.bankUsed, bank: readBank(), reviews: [] };
-    setRng(mulberry32(hashStr(today + '|' + dm.mode + '|' + JSON.stringify([L.addsub, L.mul, L.div, L.fracdec, L.tiers, ctx.skill, st.placementDays.length]))));
+    if (dm.needFinalize) { finalizePlacement(today); st = getState(); rs = readRotation(); }
+    var slot = wantCatch ? 2 : 1, L = readLevels(), hist = historyContext(today);
+    var ctx = { levels: L, rot: rs.rot, rounds: rs.rounds, targetMult: cfg.TARGET_MULTIPLIER, yFactor: cfg.ASSESS_Y_FACTOR,
+      usedSigs: hist.usedSigs, recentTpl: hist.recentTpl, bankUsed: hist.bankUsed, bank: readBank(), reviews: [] };
+    setRng(mulberry32(hashStr(today + '|' + dm.mode + '|' + slot + '|' + JSON.stringify([rs.rot, rs.rounds, L.tiers, st.placementDays.length]))));
     var set;
     if (dm.mode === 'placement') set = buildPlacementDay(ctx, dm.day);
     else if (dm.mode === 'benchmark') set = buildBenchmark(ctx);
-    else {
-      ctx.reviews = getDueReviews(today); set = buildDailySet(ctx);
-      if (cfg.TARGET_MULTIPLIER !== 1) set.sections[0].targetSec = Math.round(set.sections[0].targetSec * cfg.TARGET_MULTIPLIER);
-    }
-    set.status = 'ready'; set.date = today; set.child = childLabel(); set.childName = st.childName || ''; set.aMaxSec = cfg.A_MAX_SEC;
+    else { ctx.reviews = getDueReviews(today); set = buildDailySet(ctx); }
+    var a = set.sections[0];
+    set.status = 'ready'; set.date = today; set.slot = slot; set.catchup = wantCatch; set.child = childLabel(); set.childName = st.childName || '';
+    set.aMaxSec = Math.max(cfg.A_MAX_SEC, (a.ySec || 0) + 300);
+    if (wantCatch) set.title = 'ชุดชดเชย (ไม่บังคับ) — ' + set.title;
     return set;
   } catch (e) {
     return { status: 'error', message: String(e && e.message || e), stack: String(e && e.stack || '') };
@@ -2119,13 +2836,13 @@ function itemRowsFor(date, mode, sections) {
     (sec.items || []).forEach(function (it) {
       rows.push([date, mode, sec.id, it.cat, it.key, it.tag || '', it.sig || '', it.ok1 ? 1 : 0, it.tries || 1, it.revealed ? 1 : 0, round1s(it.sec || 0),
         it.ok1 ? '' : (it.errType || 'ตอบผิด'), it.review ? 1 : 0, it.cmp ? 1 : 0, it.tier || '', it.ladder == null ? '' : it.ladder,
-        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60)]);
+        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '']);
     });
   });
   return rows;
 }
 
-function sectionRowCells(s, isA) {
+function sectionRowCells(s) {
   return [s.right, s.total, s.firstSec, s.totalSec, s.target, s.rounds, s.errors];
 }
 
@@ -2135,79 +2852,99 @@ function submitSession(res) {
   try { return doSubmit(res); } finally { lock.releaseLock(); }
 }
 
+function outcomeCell(o) { return o === 'pass' ? 'ผ่าน' : o === 'flag' ? 'ผ่าน(ช้า)' : o === 'repeat' ? 'ไม่ผ่าน' : '-'; }
+function weekResultText(info) {
+  if (info.outcome === 'pass') return 'ผ่าน รอบ ' + info.round + ' → รอบ ' + (info.round + 1);
+  if (info.outcome === 'flag') return 'ผ่านแต่ช้า (' + info.reason + ') รอบ ' + info.round + ' → รอบ ' + (info.round + 1);
+  return info.event === 'moveon' ? 'ไม่ผ่านซ้ำ (' + info.reason + ') ไปหัวข้อถัดไป รอบคงเดิม' : 'ไม่ผ่าน (' + info.reason + ') ทำหัวข้อนี้ซ้ำ';
+}
+function weekNote(info) {
+  var tn = info.topicName;
+  if (!info.assessment) return 'ชุดที่ ' + info.setNo + '/' + ROT_SETS + ' ของสัปดาห์' + tn + ' เสร็จแล้ว · ครั้งต่อไป: ' + info.nextLabel;
+  if (info.outcome === 'pass') return 'ผ่านการประเมินสัปดาห์' + tn + '! ' + tn + 'ขึ้นรอบ ' + (info.round + 1) + ' · สัปดาห์ถัดไป: ' + info.nextLabel;
+  if (info.outcome === 'flag') return 'ผ่านการประเมินสัปดาห์' + tn + ' แต่ช้ากว่าเป้า (' + info.reason + ') · ' + tn + 'ขึ้นรอบ ' + (info.round + 1) + ' · ต่อไป: ' + info.nextLabel;
+  if (info.event === 'moveon') return 'ประเมินสัปดาห์' + tn + 'ซ้ำแล้วยังไม่ผ่าน (' + info.reason + ') ไปต่อหัวข้อถัดไป รอบคงเดิม · ต่อไป: ' + info.nextLabel;
+  return 'ยังไม่ผ่านการประเมินสัปดาห์' + tn + ' (' + info.reason + ') · ทำหัวข้อนี้ซ้ำอีก 1 สัปดาห์ด้วยตัวเลขชุดใหม่ · ต่อไป: ' + info.nextLabel;
+}
+
 function doSubmit(res) {
   var cfg = getSettings(), st = getState(), today = todayYmd(), date = res.date || today;
   var nm = cleanChildName(res.childName);
   if (nm && nm !== st.childName) { st.childName = nm; setState(st); }
   if (ymdDiff(today, date) > 1 || ymdDiff(today, date) < 0) date = today;
-  var existing = findDailyRow(date);
-  if (existing) return { ok: true, duplicate: true, summary: doneSummaryFromRow(existing) };
+  var mode = res.mode, slot = Number(res.slot) === 2 ? 2 : 1;
 
-  var mode = res.mode, secs = {}, stats = {};
+  // กันส่งซ้ำ (วันที่ + ชุดในวัน) และบังคับกติกา "ไม่เกิน 2 ชุดต่อวัน / ชดเชยเฉพาะที่ยังเหลือชุดในสัปดาห์" ฝั่งเซิร์ฟเวอร์
+  var rowsToday = findDailyRows(date);
+  var dup = rowsToday.filter(function (r) { return slotOfRow(r) === slot; })[0];
+  if (dup) return { ok: true, duplicate: true, summary: doneSummaryFromRow(dup) };
+  if (slot === 2) {
+    if (mode !== 'daily' || !catchupState(rowsToday, readRotation()).available) return { ok: false, refused: true, message: 'ทำชุดชดเชยไม่ได้ในตอนนี้ (วันละไม่เกิน 2 ชุด และเฉพาะเมื่อสัปดาห์ยังเหลือชุด)' };
+  } else if (rowsToday.length >= MAX_SETS_PER_DAY) return { ok: false, refused: true, message: 'วันนี้ทำครบ ' + MAX_SETS_PER_DAY + ' ชุดแล้ว' };
+
+  var secs = {}, stats = {};
   (res.sections || []).forEach(function (s) { secs[s.id] = s; stats[s.id] = secStat(s); });
   var A = secs.A, sA = stats.A || secStat({ id: 'A', items: [] }), sB = stats.B || secStat({ id: 'B', items: [] }), sC = stats.C || secStat({ id: 'C', items: [] });
 
-  // 1) บันทึกผลรายข้อ
+  // 1) บันทึกผลรายข้อ (คำถามสังเกต "สังเกตเห็นอะไร?" ไม่ถูกบันทึกเป็นข้อที่ให้คะแนน)
   var itemRows = itemRowsFor(date, mode, res.sections || []);
   var ish = getSheet(SH.items);
   if (itemRows.length) ish.getRange(ish.getLastRow() + 1, 1, itemRows.length, ITEM_HEAD.length).setValues(itemRows);
 
-  // 2) ทบทวน: ข้อที่เคยมาทบทวนถือว่าทำแล้ว / ข้อที่ผิดรอบแรกเข้าคิวทบทวน 3 วัน และ 1 สัปดาห์
+  // 2) ทบทวน: ข้อที่เคยมาทบทวนถือว่าทำแล้ว / ข้อที่ผิดรอบแรกเข้าคิวทบทวน 3 วัน และ 1 สัปดาห์ (คีย์ตามชนิดหน้า จึงรวมซ้ำกัน)
   var allItems = [].concat.apply([], (res.sections || []).map(function (s) { return s.items || []; }));
   markReviewsDone(allItems.filter(function (i) { return i.reviewId; }).map(function (i) { return i.reviewId; }), date);
-  // แบบวัดระดับ/แบบวัดผลมีข้อยากเกินระดับโดยตั้งใจ จึงไม่ส่งข้อคิดเลขเข้าคิวทบทวน (ข้อโจทย์ปัญหา/สังเกต/วิเคราะห์ยังทบทวนตามปกติ)
+  // แบบวัดระดับ/แบบวัดผลมีข้อยากเกินระดับโดยตั้งใจ จึงไม่ส่งข้อคิดเลขเข้าคิวทบทวน
   var wrong = allItems.filter(function (i) { return !i.ok1 && i.key && (mode === 'daily' || SKILLS.indexOf(i.cat) < 0); }).map(function (i) {
-    var m = /^FIX:(.+)$/.exec(i.key);
     return { key: i.key, cat: i.cat, tier: i.tier || 2, level: i.level, fixCat: i.fixCat, q: i.q };
   });
   addReviews(wrong, date);
   touchBankUsed(allItems.filter(function (i) { return /^FIX:/.test(i.key); }).map(function (i) { return i.key.slice(4); }), date);
 
-  // 3) ระดับ
-  var L = readLevels(), summary = { date: date, mode: mode, title: res.title || '', sections: [sA, sB, sC], note: '' }, drillInfo = null;
-  var aMainItems = A ? (A.items || []).filter(function (i) { return !i.review; }) : [];
-  var stepLabel = '', skillName = '';
+  // 3) สถานะ
+  var summary = { date: date, mode: mode, slot: slot, title: res.title || '', sections: [sA, sB, sC], note: '' }, info = null, topicName = '', stepLabel = '';
+  var wk = { topic: '', round: '', setNo: '', outcome: '', pages: '', x: '', y: '', repeat: '' };
   if (mode === 'daily' && A) {
-    var sk = A.skill, step = stepOf(sk, L[sk]);
-    skillName = SKILL_NAMES[sk]; stepLabel = 'ขั้น ' + step.no;
-    var dec = decideDrillPass({ items: aMainItems, totalSec: (A.firstSec || 0) + (A.correctionSec || 0), targetSec: A.targetSec });
-    drillInfo = { pass: dec.pass, reason: dec.reason, skill: sk, stepNo: step.no, stepName: step.name };
-    var nsteps = skillSteps(sk).length;
-    if (dec.pass) {
-      L.fails[sk] = 0;
-      if (L[sk] < nsteps) { L[sk] += 1; var nx = stepOf(sk, L[sk]); summary.note = 'ผ่านแล้ว! พรุ่งนี้ไปขั้นต่อไป: ' + SKILL_NAMES[sk] + ' ขั้น ' + nx.no + ' (' + nx.name + ')'; }
-      else summary.note = 'ผ่านขั้นสุดท้ายของทักษะ' + SKILL_NAMES[sk] + 'แล้ว เก่งมาก!';
-      st.nextSkill = (st.nextSkill + 1) % SKILLS.length;
-    } else {
-      L.fails[sk] = (L.fails[sk] || 0) + 1;
-      summary.note = 'ยังไม่ผ่านขั้นนี้ (' + dec.reason + ') พรุ่งนี้ทำขั้นเดิมอีกครั้ง';
-      if (L.fails[sk] >= cfg.MAX_REPEATS) {
-        drillInfo.stuck = L.fails[sk];
-        st.nextSkill = (st.nextSkill + 1) % SKILLS.length;
-        summary.note += ' (ทำไม่ผ่านติดกัน ' + L.fails[sk] + ' ครั้ง วันพรุ่งนี้จะสลับไปฝึกทักษะอื่นก่อน)';
-      }
+    var rs = readRotation(), rot = rs.rot, rounds = rs.rounds, L = readLevels();
+    var aSet = Number(A.setNo), aTopic = String(A.topic), aRound = Number(A.round), assess = aSet === ROT_SETS;
+    var matches = aTopic === rot.topic && aSet === rot.setNo && aRound === planRound(rounds[rot.topic]);
+    var x = Math.round(setXSec(aTopic, aRound, aSet) * cfg.TARGET_MULTIPLIER), y = Math.round(x * cfg.ASSESS_Y_FACTOR);
+    var aMain = (A.items || []).filter(function (i) { return !i.review; });
+    info = { topic: aTopic, topicName: TOPIC_NAMES[aTopic], round: aRound, setNo: aSet, assessment: assess, x: x, y: y, stale: !matches, repeat: !!A.repeat,
+      label: rotLabel(aTopic, aRound, aSet, !!A.repeat), totalSec: Math.round((A.firstSec || 0) + (A.correctionSec || 0)),
+      pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }) };
+    if (assess) {
+      var o = assessOutcome({ mastered: aMain.every(function (i) { return !i.revealed; }), totalSec: info.totalSec }, x, y);
+      info.outcome = o.outcome; info.reason = o.reason;
     }
-    L.last[sk] = date;
+    if (matches) {
+      var tr = rotAfterSet(rot, rounds, aSet, assess ? { outcome: info.outcome } : null);
+      info.event = tr.event; info.nextLabel = rotLabel(tr.rot.topic, planRound(tr.rounds[tr.rot.topic]), tr.rot.setNo, tr.rot.repeat);
+      writeRotation(tr.rot, tr.rounds, assess ? { topic: aTopic, text: weekResultText(info), date: date } : null);
+      summary.note = weekNote(info);
+    } else summary.note = 'ชุดนี้ไม่ตรงกับสถานะปัจจุบันในแท็บ "รอบหัวข้อ" (อาจมีการแก้ไขสถานะ) จึงบันทึกผลแต่ไม่เลื่อนสถานะ';
+    topicName = info.topicName; stepLabel = 'รอบ ' + aRound + ' · ชุด ' + aSet + '/' + ROT_SETS;
+    wk = { topic: info.topicName, round: aRound, setNo: aSet, outcome: assess ? outcomeCell(info.outcome) : '-', pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }).join(','),
+      x: x, y: y, repeat: A.repeat ? 'ซ้ำ' : '' };
     // ปรับระดับ B/C ตามผล 3 ครั้งล่าสุด (ไม่ใช้ตัดสินผ่าน/ไม่ผ่าน)
-    var past = readDailyRows(30).filter(function (r) { return r[1] === 'ประจำวัน'; });
-    var bP = past.map(function (r) { return Number(r[12 + 1]) ? Number(r[12]) / Number(r[13]) * 100 : null; }).filter(function (x) { return x != null; });
-    var cP = past.map(function (r) { return Number(r[20]) ? Number(r[19]) / Number(r[20]) * 100 : null; }).filter(function (x) { return x != null; });
+    var past = readDailyRows(40).filter(function (r) { return r[1] === 'ประจำวัน'; });
+    var bP = past.map(function (r) { return Number(r[13]) ? Number(r[12]) / Number(r[13]) * 100 : null; }).filter(function (v) { return v != null; });
+    var cP = past.map(function (r) { return Number(r[20]) ? Number(r[19]) / Number(r[20]) * 100 : null; }).filter(function (v) { return v != null; });
     if (sB.total) bP.push(sB.right / sB.total * 100);
     if (sC.total) cP.push(sC.right / sC.total * 100);
     L.tiers.observe = adjustTier(L.tiers.observe, bP);
-    var cT = adjustTier(L.tiers.word, cP);
-    L.tiers.word = cT; L.tiers.analytic = adjustTier(L.tiers.analytic, cP);
+    L.tiers.word = adjustTier(L.tiers.word, cP); L.tiers.analytic = adjustTier(L.tiers.analytic, cP);
     writeLevels(L);
-    summary.drill = drillInfo;
+    summary.drill = info;
   } else if (mode === 'placement') {
     if (st.placementDays.indexOf(res.placementDay) < 0) st.placementDays.push(res.placementDay);
     summary.note = 'วันที่ ' + st.placementDays.length + ' จาก ' + PLACEMENT_DAYS + ' ของแบบวัดระดับ';
-    skillName = res.placementDay <= 3 ? SKILL_NAMES[SKILLS[res.placementDay]] : 'โจทย์ปัญหา/สังเกต/วิเคราะห์';
+    topicName = res.placementDay <= 3 ? SKILL_NAMES[SKILLS[res.placementDay]] : 'โจทย์ปัญหา/สังเกต/วิเคราะห์';
     setState(st);
     if (st.placementDays.length >= PLACEMENT_DAYS) {
       summary.placement = finalizePlacement(date, true);
       st = getState();
-      summary.note = 'ครบ 5 วันแล้ว! ระบบกำหนดขั้นเริ่มต้นของสัปดาห์หน้าให้แล้ว';
+      summary.note = 'ครบ 5 วันแล้ว! ระบบกำหนดรอบเริ่มต้นของแต่ละหัวข้อให้แล้ว (เริ่มสัปดาห์บวก ชุด 1)';
     }
   } else if (mode === 'benchmark') {
     var cmpRows = itemRows.filter(function (r) { return r[13] === 1; });
@@ -2217,28 +2954,27 @@ function doSubmit(res) {
     appendBench(label, date, bs);
     summary.benchmark = { label: label, stats: bs };
     summary.note = 'ทำแบบวัดผลประจำเดือนเสร็จแล้ว ผู้ปกครองจะได้รับรายงานเปรียบเทียบทางอีเมลสิ้นเดือน';
-    skillName = 'แบบวัดผลประจำเดือน';
+    topicName = 'แบบวัดผลประจำเดือน';
     setState(st);
     rebuildReportSheet();
   }
-  summary.skillName = skillName; summary.stepLabel = stepLabel;
+  summary.skillName = topicName; summary.stepLabel = stepLabel;
 
-  // 4) บันทึกผลรายวัน
+  // 4) บันทึกผลรายวัน (1 แถวต่อชุด: ชุดปกติ + ชุดชดเชย)
   var totalMin = Math.round(((res.totalSec || (sA.totalSec + sB.totalSec + sC.totalSec)) / 60) * 10) / 10;
   var modeLabel = mode === 'daily' ? 'ประจำวัน' : mode === 'placement' ? 'วัดระดับ' : 'วัดผลรายเดือน';
-  var passCell = drillInfo ? (drillInfo.pass ? 'ผ่าน' : 'ไม่ผ่าน') : '-';
-  var dsh = getSheet(SH.daily), row = [date, modeLabel, skillName, stepLabel].concat(sectionRowCells(sA), [passCell], sectionRowCells(sB), sectionRowCells(sC), [totalMin, summary.note]);
+  var passCell = info ? (info.assessment ? outcomeCell(info.outcome) : '-') : '-';
+  var dsh = getSheet(SH.daily), row = [date, modeLabel, topicName, stepLabel].concat(sectionRowCells(sA), [passCell], sectionRowCells(sB), sectionRowCells(sC), [totalMin, summary.note],
+    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat]);
   dsh.getRange(dsh.getLastRow() + 1, 1, 1, DAILY_HEAD.length).setValues([row]);
-  if (mode === 'daily') setState(st);
 
   // 5) ความก้าวหน้า + แผนภูมิ
-  var L2 = readLevels();
-  var psh = getSheet(SH.progress);
+  var rd2 = readRotation().rounds, psh = getSheet(SH.progress);
   psh.getRange(psh.getLastRow() + 1, 1, 1, PROGRESS_HEAD.length).setValues([[date, pctOf(sA.right, sA.total), pctOf(sB.right, sB.total), pctOf(sC.right, sC.total),
-    drillInfo && sA.target ? round1s((A.firstSec + (A.correctionSec || 0)) / sA.target * 100) : '', L2.addsub, L2.mul, L2.div, L2.fracdec]]);
+    info && sA.target ? round1s(info.totalSec / sA.target * 100) : '', rd2.add, rd2.sub, rd2.mul, rd2.div, rd2.frac]]);
   try { rebuildProgressCharts(); } catch (e) { Logger.log('chart: ' + e); }
 
-  try { props().deleteProperty('DRAFT_' + date); } catch (e) { /* ไม่สำคัญ */ }
+  try { props().deleteProperty('DRAFT_' + date + '_' + slot); } catch (e) { /* ไม่สำคัญ */ }
   summary.pendingReviews = countPendingReviews();
   try { sendSessionEmail(summary); } catch (e) { Logger.log('email: ' + e); summary.emailError = String(e); }
   return { ok: true, summary: summary };
@@ -2247,7 +2983,7 @@ function doSubmit(res) {
 /** บันทึกสถิติของส่วนที่เพิ่งทำเสร็จไว้ก่อน (ร่างขนาดเล็กใน Properties) เผื่อปิดหน้าจอกลางคัน ผลเต็มจะลงชีตตอนจบทั้งชุด */
 function submitSection(draft) {
   try {
-    var key = 'DRAFT_' + (draft.date || todayYmd());
+    var key = 'DRAFT_' + (draft.date || todayYmd()) + '_' + (Number(draft.slot) === 2 ? 2 : 1);
     var cur = props().getProperty(key), obj = cur ? JSON.parse(cur) : { stats: {} };
     obj.stats[draft.section.id] = secStat(draft.section);
     obj.mode = draft.mode;
@@ -2259,12 +2995,12 @@ function submitSection(draft) {
 function doneSummaryFromRow(r) {
   function sec(id, name, o) { return { id: id, name: name, right: r[o], total: r[o + 1], firstSec: r[o + 2], totalSec: r[o + 3], target: r[o + 4], rounds: r[o + 5], errors: r[o + 6] }; }
   return { date: r[0], mode: r[1], skillName: r[2], stepLabel: r[3], sections: [sec('A', 'คิดเลขเร็ว', 4), sec('B', 'การสังเกต', 12), sec('C', 'คิดวิเคราะห์', 19)],
-    passCell: r[11], note: r[27], totalMin: r[26], fromRow: true };
+    passCell: r[11], note: r[27], totalMin: r[26], slot: slotOfRow(r), topic: String(r[DC.topic] || ''), round: r[DC.round], setNo: r[DC.setNo], outcome: String(r[DC.outcome] || ''), fromRow: true };
 }
 
-/** คำนวณขั้นเริ่มต้นจากแบบวัดระดับ 5 วัน */
+/** คำนวณขั้นเริ่มต้นจากแบบวัดระดับ 5 วัน แล้วแปลงเป็น "รอบเริ่มต้น" ของแต่ละหัวข้อ (บวก/ลบมาจากบันไดเดียวกัน) */
 function finalizePlacement(date, silent) {
-  var cfg = getSettings(), st = getState(), L = readLevels(), rows = readItemRows(3000).filter(function (r) { return r[1] === 'placement'; });
+  var cfg = getSettings(), st = getState(), L = readLevels(), rows = readItemRowsSince(ymdAdd(date, -60)).filter(function (r) { return r[1] === 'placement'; });
   var starts = {}, startNo = {};
   SKILLS.forEach(function (sk) {
     var n = skillSteps(sk).length, scores = [], i;
@@ -2284,15 +3020,17 @@ function finalizePlacement(date, silent) {
     L.tiers[p[1]] = t; tiers[p[1]] = t;
   });
   writeLevels(L, startNo);
+  var startRounds = placementRounds(startNo);
+  writeRotation(rotInit(), startRounds, null);
   st.placementDone = true; st.nextSkill = 0;
   setState(st);
   appendBench('วัดระดับ', date, cs);
   rebuildReportSheet();
-  return { starts: starts, tiers: tiers, stats: cs };
+  return { starts: starts, tiers: tiers, stats: cs, rounds: startRounds };
 }
 
 /* ---------------- ความก้าวหน้า ---------------- */
-var PROGRESS_HEAD = ['วันที่', 'ส่วน A ถูกรอบแรก (%)', 'ส่วน B ถูกรอบแรก (%)', 'ส่วน C ถูกรอบแรก (%)', 'ส่วน A เวลารวม ÷ เป้า (%)', 'ขั้น บวกลบ', 'ขั้น คูณ', 'ขั้น หาร', 'ขั้น เศษส่วนทศนิยม'];
+var PROGRESS_HEAD = ['วันที่', 'ส่วน A ถูกรอบแรก (%)', 'ส่วน B ถูกรอบแรก (%)', 'ส่วน C ถูกรอบแรก (%)', 'ส่วน A เวลารวม ÷ เป้า (%)', 'รอบ บวก', 'รอบ ลบ', 'รอบ คูณ', 'รอบ หาร', 'รอบ เศษส่วน'];
 function rebuildProgressCharts() {
   var sh = getSheet(SH.progress), n = sh.getLastRow();
   sh.getCharts().forEach(function (c) { sh.removeChart(c); });
@@ -2300,13 +3038,13 @@ function rebuildProgressCharts() {
   function chart(title, cols, row, vTitle, max) {
     var b = sh.newChart().setChartType(Charts.ChartType.LINE).addRange(sh.getRange(1, 1, n, 1));
     cols.forEach(function (c) { b = b.addRange(sh.getRange(1, c, n, 1)); });
-    b = b.setNumHeaders(1).setPosition(row, 11, 0, 0).setOption('title', title).setOption('legend', { position: 'bottom' })
+    b = b.setNumHeaders(1).setPosition(row, 12, 0, 0).setOption('title', title).setOption('legend', { position: 'bottom' })
       .setOption('pointSize', 5).setOption('width', 620).setOption('height', 300).setOption('vAxis', { title: vTitle, minValue: 0 });
     sh.insertChart(b.build());
   }
   chart('ความแม่นยำรอบแรก (% ถูก) แยกตามส่วน', [2, 3, 4], 2, '% ถูก');
   chart('ส่วน A: เวลารวม ÷ เวลาเป้าหมาย (ต่ำกว่า 100% = ทันเวลา)', [5], 18, '% ของเวลาเป้าหมาย');
-  chart('ขั้นปัจจุบันของแต่ละทักษะคิดเลข', [6, 7, 8, 9], 34, 'ขั้น');
+  chart('รอบปัจจุบันของแต่ละหัวข้อ', [6, 7, 8, 9, 10], 34, 'รอบ');
 }
 
 // ======================= Reports.gs =======================
@@ -2421,19 +3159,23 @@ function sendSessionEmail(sm) {
   }).join('');
   var h = '<div style="' + MAIL_CSS + '"><h2 style="margin:0 0 4px;">' + name + ' ทำแบบฝึกเสร็จแล้ว ✅</h2><div style="color:#5f6368;">' + esc(thaiDate(sm.date)) + ' · ' + esc(sm.title || sm.mode) + '</div>';
   if (sm.drill) {
-    h += '<p style="margin:12px 0;padding:10px;border-radius:8px;background:' + (sm.drill.pass ? '#e6f4ea' : '#fef7e0') + ';"><b>ส่วน A ' + esc(sm.skillName) + ' ขั้น ' + sm.drill.stepNo + ' (' + esc(sm.drill.stepName) + '): ' + (sm.drill.pass ? '🎉 ผ่าน' : 'ยังไม่ผ่าน') + '</b>' + (sm.drill.reason ? '<br>' + esc(sm.drill.reason) : '') + '</p>';
+    var d = sm.drill, bg = d.assessment ? (d.outcome === 'pass' ? '#e6f4ea' : d.outcome === 'flag' ? '#fff4d6' : '#fef0e6') : '#eef3fb';
+    var hd = d.assessment ? 'ประเมินสัปดาห์' + d.topicName + ': ' + (d.outcome === 'pass' ? '🎉 ผ่าน' : d.outcome === 'flag' ? '⚑ ผ่านแต่ช้า (ติดธง)' : '↻ ต้องทำหัวข้อนี้ซ้ำ') : 'ส่วน A · ' + d.label;
+    h += '<p style="margin:12px 0;padding:10px;border-radius:8px;background:' + bg + ';"><b>' + esc(hd) + '</b><br>เวลารวมส่วน A (รวมเวลาแก้) ' + mmss(d.totalSec) +
+      (d.assessment ? ' · เป้า X ' + mmss(d.x) + ' · เกณฑ์สูงสุด Y ' + mmss(d.y) : ' · เป้าอ้างอิง ' + mmss(d.x)) + (d.reason ? '<br>' + esc(d.reason) : '') +
+      (d.pages && d.pages.length ? '<br><span style="font-size:13px;color:#5f6368;">เวลาแต่ละหน้า (วินาที): ' + d.pages.join(', ') + '</span>' : '') + (d.stale ? '<br><i>ชุดนี้ไม่ตรงสถานะปัจจุบัน จึงไม่เลื่อนสถานะ</i>' : '') + '</p>';
   }
   h += '<table style="border-collapse:collapse;width:100%;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>ส่วน</th><th ' + tdS() + '>ถูกรอบแรก</th><th ' + tdS() + '>เวลา</th><th ' + tdS() + '>รอบแก้</th><th ' + tdS() + '>ข้อผิดพลาด</th></tr>' + rows + '</table>';
   h += '<p>' + esc(sm.note || '') + '</p>';
-  if (sm.drill && sm.drill.stuck) h += '<p style="color:#c5221f;"><b>⚠ ติดขั้นเดิมมา ' + sm.drill.stuck + ' ครั้งแล้ว</b> ควรนั่งดูวิธีคิดด้วยกันสักครั้ง (ระบบจะสลับไปฝึกทักษะอื่นก่อน)</p>';
   if (sm.placement) {
-    h += '<h3>ผลวัดระดับ → ขั้นเริ่มต้น</h3><ul>' + SKILLS.map(function (sk) { var p = sm.placement.starts[sk]; return '<li>' + esc(SKILL_NAMES[sk]) + ': เริ่มที่ขั้น ' + p.no + ' (' + esc(p.name) + ')</li>'; }).join('') + '</ul>';
+    h += '<h3>ผลวัดระดับ → ขั้นเริ่มต้น</h3><ul>' + SKILLS.map(function (sk) { var p = sm.placement.starts[sk]; return '<li>' + esc(SKILL_NAMES[sk]) + ': ทำได้ถึงขั้น ' + p.no + ' (' + esc(p.name) + ')</li>'; }).join('') + '</ul>' +
+      (sm.placement.rounds ? '<p><b>รอบเริ่มต้นของแต่ละหัวข้อ:</b> ' + TOPICS.map(function (t) { return esc(TOPIC_NAMES[t]) + ' รอบ ' + sm.placement.rounds[t]; }).join(' · ') + '</p>' : '');
   }
   if (sm.benchmark) {
     h += '<h3>ผลแบบวัดผล ' + esc(sm.benchmark.label) + '</h3><ul>' + CATS.map(function (c) { var s = sm.benchmark.stats[c]; return s ? '<li>' + esc(CAT_NAMES[c]) + ': ' + s.pct + '%' + (SPEED_CATS.indexOf(c) >= 0 ? ' (' + s.spi + ' วินาที/ข้อ)' : '') + '</li>' : ''; }).join('') + '</ul>';
   }
   h += '<p style="color:#5f6368;font-size:13px;">ข้อที่ผิดจะกลับมาทบทวนอีกครั้งหลัง 3 วันและ 1 สัปดาห์ (ตอนนี้รอทบทวน ' + (sm.pendingReviews || 0) + ' รายการ)</p></div>';
-  var subj = '[ฝึกคณิต] ' + childLabel() + ' ' + sm.date + ' — ' + (sm.drill ? (sm.drill.pass ? 'ผ่าน ' : 'ยังไม่ผ่าน ') + sm.skillName + ' ' : '') + sm.sections.map(function (s) { return s.id + ' ' + s.right + '/' + s.total; }).join(' ');
+  var subj = '[ฝึกคณิต] ' + childLabel() + ' ' + sm.date + ' — ' + (sm.drill ? (sm.drill.assessment ? (sm.drill.outcome === 'pass' ? 'ผ่านสัปดาห์' : sm.drill.outcome === 'flag' ? 'ผ่าน(ช้า)สัปดาห์' : 'ทำซ้ำสัปดาห์') + sm.drill.topicName + ' ' : 'ชุด ' + sm.drill.setNo + '/' + ROT_SETS + ' ' + sm.drill.topicName + ' ') : '') + sm.sections.map(function (s) { return s.id + ' ' + s.right + '/' + s.total; }).join(' ');
   sendMail(subj, h);
 }
 
@@ -2441,7 +3183,7 @@ function weeklyJob() { sendWeeklySummary(); }
 function sendWeeklySummary() {
   var cfg = getSettings(), today = todayYmd(), from = ymdAdd(today, -6);
   var rows = readDailyRows(60).filter(function (r) { return r[0] >= from && r[0] <= today; });
-  var items = readItemRows(2500).filter(function (r) { return r[0] >= from && r[0] <= today && Number(r[7]) !== 1; });
+  var items = readItemRowsSince(from).filter(function (r) { return r[0] <= today && Number(r[7]) !== 1; });
   var err = {};
   items.forEach(function (r) { var e = String(r[11] || 'ตอบผิด'); err[e] = (err[e] || 0) + 1; });
   var errList = Object.keys(err).sort(function (a, b) { return err[b] - err[a]; }).slice(0, 5);
@@ -2450,12 +3192,22 @@ function sendWeeklySummary() {
   var tr = rows.map(function (r) {
     return '<tr><td ' + tdS() + '>' + esc(thaiDate(r[0])) + '</td><td ' + tdS() + '>' + esc(r[1]) + '</td><td ' + tdS() + '>' + esc((r[2] || '') + ' ' + (r[3] || '')) + '</td><td ' + tdS('text-align:center;') + '>' + esc(r[11]) + '</td><td ' + tdS('text-align:center;') + '>' + (pct(r[4], r[5]) == null ? '–' : pct(r[4], r[5]) + '%') + '</td><td ' + tdS('text-align:center;') + '>' + (pct(r[12], r[13]) == null ? '–' : pct(r[12], r[13]) + '%') + '</td><td ' + tdS('text-align:center;') + '>' + (pct(r[19], r[20]) == null ? '–' : pct(r[19], r[20]) + '%') + '</td></tr>';
   }).join('');
-  var passN = rows.filter(function (r) { return r[11] === 'ผ่าน'; }).length, drillN = rows.filter(function (r) { return r[11] === 'ผ่าน' || r[11] === 'ไม่ผ่าน'; }).length;
+  var assessRows = rows.filter(function (r) { return r[11] && r[11] !== '-'; }), passN = assessRows.filter(function (r) { return String(r[11]).indexOf('ผ่าน') === 0; }).length, drillN = assessRows.length;
+  var dayN = Object.keys(rows.reduce(function (o, r) { o[r[0]] = 1; return o; }, {})).length;
   var h = '<div style="' + MAIL_CSS + '"><h2 style="margin:0 0 4px;">สรุปประจำสัปดาห์ของ' + esc(childLabel()) + '</h2><div style="color:#5f6368;">' + esc(thaiDate(from)) + ' – ' + esc(thaiDate(today)) + '</div>';
-  h += '<p>ทำแบบฝึก <b>' + rows.length + '</b> วัน' + (drillN ? ' · ผ่านส่วน A <b>' + passN + '/' + drillN + '</b> ครั้ง' : '') + '</p>';
+  h += '<p>ทำแบบฝึก <b>' + dayN + '</b> วัน (<b>' + rows.length + '</b> ชุด)' + (drillN ? ' · ผ่านการประเมินสัปดาห์ <b>' + passN + '/' + drillN + '</b> ครั้ง' : '') + '</p>';
   if (rows.length) h += '<table style="border-collapse:collapse;width:100%;font-size:14px;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>วัน</th><th ' + tdS() + '>ประเภท</th><th ' + tdS() + '>ส่วน A</th><th ' + tdS() + '>ผล A</th><th ' + tdS() + '>A ถูก</th><th ' + tdS() + '>B ถูก</th><th ' + tdS() + '>C ถูก</th></tr>' + tr + '</table>';
   else h += '<p style="color:#c5221f;">สัปดาห์นี้ยังไม่มีการทำแบบฝึก</p>';
-  h += '<h3>ขั้นปัจจุบัน</h3><ul>' + SKILLS.map(function (sk) { var s = stepOf(sk, L[sk]); return '<li>' + esc(SKILL_NAMES[sk]) + ': ขั้น ' + s.no + ' — ' + esc(s.name) + (L.fails[sk] >= cfg.MAX_REPEATS ? ' <b style="color:#c5221f;">(ติดอยู่ ' + L.fails[sk] + ' ครั้ง)</b>' : '') + '</li>'; }).join('') + '</ul>';
+  if (assessRows.length) {
+    h += '<h3>ผลประเมินสัปดาห์ (ชุดที่ 6)</h3><table style="border-collapse:collapse;width:100%;font-size:14px;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>หัวข้อ</th><th ' + tdS() + '>ผล</th><th ' + tdS() + '>เวลา (รวมแก้)</th><th ' + tdS() + '>เป้า X / สูงสุด Y</th></tr>' + assessRows.map(function (r) {
+      var o = String(r[11]), col = o === 'ผ่าน' ? '#137333' : o === 'ผ่าน(ช้า)' ? '#b06000' : '#c5221f';
+      return '<tr><td ' + tdS() + '>' + esc(r[DC.topic] + ' รอบ ' + r[DC.round]) + (r[DC.repeat] ? ' (ซ้ำ)' : '') + '</td><td ' + tdS('font-weight:bold;color:' + col + ';') + '>' + esc(o === 'ผ่าน(ช้า)' ? '⚑ ผ่านแต่ช้า' : o === 'ผ่าน' ? 'ผ่าน' : 'ทำซ้ำ') + '</td><td ' + tdS('text-align:center;') + '>' + mmss(Number(r[7])) + '</td><td ' + tdS('text-align:center;') + '>' + mmss(Number(r[DC.x])) + ' / ' + mmss(Number(r[DC.y])) + '</td></tr>';
+    }).join('') + '</table>';
+  }
+  var rsn = readRotation();
+  h += '<h3>สถานะหัวข้อ</h3><p>ตอนนี้: <b>' + esc(rotLabel(rsn.rot.topic, planRound(rsn.rounds[rsn.rot.topic]), rsn.rot.setNo, rsn.rot.repeat)) + '</b></p><ul>' + TOPICS.map(function (t) {
+    var hs = rsn.hist[t]; return '<li>' + esc(TOPIC_NAMES[t]) + ': รอบ ' + rsn.rounds[t] + (hs.last ? ' · ผลสัปดาห์ล่าสุด: ' + esc(hs.last) : '') + '</li>';
+  }).join('') + '</ul>';
   if (!st.placementDone) h += '<p>ยังอยู่ระหว่างแบบวัดระดับ (ทำแล้ว ' + st.placementDays.length + '/' + PLACEMENT_DAYS + ' วัน)</p>';
   if (errList.length) h += '<h3>ข้อผิดพลาดที่พบบ่อย</h3><ul>' + errList.map(function (e) { return '<li>' + esc(e) + ' × ' + err[e] + '</li>'; }).join('') + '</ul>';
   h += '<p style="color:#5f6368;font-size:13px;">รอทบทวน ' + countPendingReviews() + ' รายการ</p>' + dashLinkHtml() + '</div>';
@@ -2484,7 +3236,8 @@ function sendMonthlyReport() {
   var rows = readDailyRows(80).filter(function (r) { return ymdMonth(r[0]) === mon; });
   var low = lowBankReport(), np = model.periods.length;
   var h = '<div style="' + MAIL_CSS + 'max-width:760px;"><h2 style="margin:0 0 4px;">รายงานประจำเดือน ' + esc(thaiMonthLabel(today + '')) + ' ของ' + esc(childLabel()) + '</h2>';
-  h += '<p>ทำแบบฝึกเดือนนี้ <b>' + rows.length + '</b> วัน</p><p style="padding:10px;border-radius:8px;background:#f1f3f4;"><b>' + esc(model.summary) + '</b></p>';
+  var dayN = Object.keys(rows.reduce(function (o, r) { o[r[0]] = 1; return o; }, {})).length;
+  h += '<p>ทำแบบฝึกเดือนนี้ <b>' + dayN + '</b> วัน (<b>' + rows.length + '</b> ชุด)</p><p style="padding:10px;border-radius:8px;background:#f1f3f4;"><b>' + esc(model.summary) + '</b></p>';
   if (np) {
     var th = '<tr style="background:#f1f3f4;"><th ' + tdS() + '>หมวด</th>' + model.periods.map(function (p) { return '<th ' + tdS() + '>' + esc(p.label) + '</th>'; }).join('') + (np >= 2 ? '<th ' + tdS() + '>เทียบเดือนก่อน</th><th ' + tdS() + '>เทียบเริ่มต้น</th>' : '') + '</tr>';
     var last = np - 1, body = model.cats.map(function (c) {
@@ -2535,21 +3288,27 @@ function readProgressRows_(maxRows) {
 function dash_getBundle(pin) {
   dash_need_(pin);
   var cfg = getSettings(), st = getState(), L = readLevels(), today = todayYmd(), green = cfg.DASH_GREEN, yellow = cfg.DASH_YELLOW;
-  var list = dashDailyList(readDailyRows(400)), doneSet = {}, passMap = {};
-  list.forEach(function (d) { doneSet[d.date] = true; passMap[d.date] = d.pass; });
+  var list = dashDailyList(readDailyRows(500)), doneSet = {}, passMap = {};
+  list.forEach(function (d) {
+    doneSet[d.date] = true;
+    // วันที่มี 2 ชุด: ผลประเมินสัปดาห์ (ผ่าน/ไม่ผ่าน) ชนะชุดที่ไม่ได้ประเมิน
+    var cur = passMap[d.date];
+    if (cur === undefined || cur === '-' || (cur !== 'ผ่าน' && d.pass && d.pass !== '-')) passMap[d.date] = d.pass;
+  });
   var from30 = ymdAdd(today, -30), from14 = ymdAdd(today, -14);
-  var items = readItemRows(6000);
+  var items = readItemRowsSince(from30);
   var model = computeReportModel(readBench(), cfg.DELTA_THRESHOLD);
   var streak = dashStreak(doneSet, today, cfg.practiceDays), missed = dashMissed(doneSet, cfg.START_DATE, today, cfg.practiceDays);
   var due = getDueReviews(today), low = [];
   try { low = lowBankReport(); } catch (e) { low = []; }
   var todayRow = list.filter(function (d) { return d.date === today; })[0];
+  var rs = readRotation();
   var alerts = dashAlerts({ startDate: cfg.START_DATE, today: today, placement: { done: st.placementDone, days: st.placementDays.length, of: PLACEMENT_DAYS },
-    fails: L.fails, levels: L, maxRepeats: cfg.MAX_REPEATS, missed: missed, list: list, yellow: yellow, dueReviews: due.length, lowBank: low,
+    rot: { topic: rs.rot.topic, round: planRound(rs.rounds[rs.rot.topic]), setNo: rs.rot.setNo, repeat: rs.rot.repeat }, missed: missed, list: list, yellow: yellow, dueReviews: due.length, lowBank: low,
     streak: streak, todayDone: !!todayRow, todayPass: todayRow && todayRow.pass });
   var history = list.slice().reverse().slice(0, 60).map(function (d) {
     return { date: d.date, mode: d.mode, skillName: d.skillName, stepLabel: d.stepLabel, pass: d.pass, aPct: d.aPct, bPct: d.bPct, cPct: d.cPct, ratio: d.ratio,
-      A: d.A, B: d.B, C: d.C, totalMin: d.totalMin, note: d.note };
+      A: d.A, B: d.B, C: d.C, totalMin: d.totalMin, note: d.note, slot: d.slot, topic: d.topic, round: d.round, setNo: d.setNo, pagesSec: d.pagesSec, x: d.x, y: d.y, repeat: d.repeat };
   });
   var bank = [];
   try {
@@ -2563,7 +3322,8 @@ function dash_getBundle(pin) {
     placement: { done: st.placementDone, days: st.placementDays.length, of: PLACEMENT_DAYS }, tiers: L.tiers,
     kpi: { streak: streak, missed: missed, sessions: list.length, month: dashMonthStats(list, ymdMonth(today)), pendingReviews: countPendingReviews(), dueReviews: due.length,
       today: todayRow ? { pass: todayRow.pass, aPct: todayRow.aPct, bPct: todayRow.bPct, cPct: todayRow.cPct, mode: todayRow.mode } : null },
-    skills: dashSkillProgress(L), alerts: alerts,
+    topics: dashTopicProgress(rs), rotation: { topic: rs.rot.topic, topicName: TOPIC_NAMES[rs.rot.topic], round: planRound(rs.rounds[rs.rot.topic]), setNo: rs.rot.setNo, repeat: rs.rot.repeat, weekNo: rs.rot.weekNo,
+      label: rotLabel(rs.rot.topic, planRound(rs.rounds[rs.rot.topic]), rs.rot.setNo, rs.rot.repeat) }, trend: dashTopicTrend(list), alerts: alerts,
     calendar: dashCalendar(passMap, today, cfg.START_DATE, cfg.practiceDays, 6),
     series: dashSeries(readProgressRows_(200)),
     report: model, radar: dashRadar(model),
@@ -2577,10 +3337,11 @@ function dash_getBundle(pin) {
 function dash_getSession(pin, date) {
   dash_need_(pin);
   date = String(date || '');
-  var rows = readItemRows(6000).filter(function (r) { return String(r[0]) === date; });
+  var rows = readItemRowsSince(date).filter(function (r) { return String(r[0]) === date; });
+  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length }; });
   var secName = { A: 'คิดเลขเร็ว', B: 'การสังเกต', C: 'คิดวิเคราะห์' };
   return {
-    date: date, total: rows.length,
+    date: date, total: rows.length, sets: sets,
     wrong: rows.filter(function (r) { return Number(r[7]) !== 1; }).map(function (r) {
       return { section: secName[r[2]] || String(r[2]), cat: CAT_NAMES[r[3]] || String(r[3]), label: dashTagLabel(r[4]), q: String(r[16] || ''), errType: String(r[11] || ''), tries: Number(r[8]) || 1, revealed: Number(r[9]) === 1, review: Number(r[12]) === 1 };
     })
@@ -2652,7 +3413,7 @@ function setup() {
   function head(name, headers, widths, textCols) {
     var sh = getSheet(name);
     (textCols || []).forEach(function (c) { sh.getRange(c + ':' + c).setNumberFormat('@'); });  // วันที่/ข้อความ เก็บเป็นข้อความล้วน ไม่ให้ชีตแปลงเป็นวันที่เอง
-    if (sh.getLastRow() < 1) sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
     sh.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#e8eaed').setWrap(true).setVerticalAlignment('middle');
     sh.setFrozenRows(1);
     (widths || []).forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
@@ -2682,8 +3443,8 @@ function setup() {
   bank.getRange(2, 3, Math.max(1, bank.getLastRow() - 1), 3).setWrap(true);
   bank.getRange(1, 9).setValue('← เพิ่มข้อใหม่ต่อท้ายได้เลย กรอกแค่ 5 คอลัมน์แรก (หมวด/ระดับ/โจทย์/คำตอบ/คำอธิบาย) ถ้าคำตอบไม่ใช่ตัวเลข ให้ใส่ตัวเลือกคั่นด้วย | ในคอลัมน์ F').setFontColor('#5f6368');
   // ผลและข้อมูล
-  head(SH.daily, DAILY_HEAD, [95, 90, 100, 70], ['A']);
-  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360], ['A', 'E', 'F', 'G', 'Q']);
+  head(SH.daily, DAILY_HEAD, [95, 90, 100, 90], ['A', 'AB', 'AC', 'AF', 'AG']);
+  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360, 50], ['A', 'E', 'F', 'G', 'Q']);
   var lv = head(SH.levels, LEVEL_HEAD, [190, 150, 330, 140, 150, 130, 100, 260], ['G']);
   if (!lv.getRange(2, 1).getValue()) {
     SKILLS.forEach(function (sk, i) { lv.getRange(2 + i, 1).setValue(SKILL_NAMES[sk]); });
@@ -2691,14 +3452,18 @@ function setup() {
     var L0 = { tiers: { word: 2, observe: 2, analytic: 2 }, fails: {}, last: {} };
     SKILLS.forEach(function (sk) { L0[sk] = 1; L0.fails[sk] = 0; });
     writeLevels(L0);
-    lv.getRange(10, 1).setValue('หมายเหตุ: ขั้นเริ่มต้นจะถูกกำหนดอัตโนมัติหลังทำแบบวัดระดับครบ 5 วัน — ผู้ปกครองแก้เลขในคอลัมน์ B เองได้ทุกเมื่อ').setFontColor('#5f6368');
+    lv.getRange(10, 1).setValue('หมายเหตุ: แท็บนี้เก็บผลจากแบบวัดระดับ (ขั้นเริ่มต้นของแต่ละบันไดเดิม) ไว้อ้างอิงและใช้กับแบบวัดผลรายเดือน — การฝึกประจำวันใช้แท็บ "รอบหัวข้อ" แทน ส่วนระดับความยากของโจทย์ปัญหา/สังเกต/วิเคราะห์ปรับในแถวล่างของแท็บนี้').setFontColor('#5f6368');
   }
   head(SH.review, REVIEW_HEAD, [80, 110, 90, 70, 80, 90, 110, 110, 100, 130, 300], ['B', 'G', 'H', 'K']);
-  head(SH.progress, PROGRESS_HEAD, [95, 110, 110, 110, 130, 80, 80, 80, 110], ['A']);
+  head(SH.progress, PROGRESS_HEAD, [95, 110, 110, 110, 130, 80, 80, 80, 80, 90], ['A']);
+  var rot = head(SH.rotation, ROT_HEAD, [210, 170, 170, 360, 110], ['E']);
+  ensureRotationSheet();
+  rot.getRange(1, 1, 1, ROT_HEAD.length).setValues([ROT_HEAD]);
+  rot.getRange(13, 1).setValue('หมายเหตุ: ระบบเลื่อนสถานะให้เองหลังทำเสร็จแต่ละชุด ผู้ปกครองแก้รอบ/ชุดถัดไปได้เมื่อต้องการ (ชุดที่เปิดค้างอยู่ก่อนแก้จะไม่เลื่อนสถานะ)').setFontColor('#5f6368');
   head(SH.bench, BENCH_HEAD, [100, 100, 130, 60, 70, 70, 90], ['A', 'B']);
   getSheet(SH.report);
   // เรียงแท็บ และลบแท็บเปล่าเริ่มต้น
-  [SH.settings, SH.daily, SH.levels, SH.progress, SH.report, SH.bank, SH.review, SH.items, SH.bench].forEach(function (n, i) {
+  [SH.settings, SH.daily, SH.rotation, SH.levels, SH.progress, SH.report, SH.bank, SH.review, SH.items, SH.bench].forEach(function (n, i) {
     var sh = ss().getSheetByName(n); ss().setActiveSheet(sh); ss().moveActiveSheet(i + 1);
   });
   ['ชีต1', 'Sheet1'].forEach(function (n) {
@@ -2737,6 +3502,8 @@ function clearTestData() {
   SKILLS.forEach(function (sk) { L0[sk] = 1; L0.fails[sk] = 0; });
   writeLevels(L0);
   props().deleteProperty('STATE');
+  var rsh = ss().getSheetByName(SH.rotation);
+  if (rsh) { rsh.clear(); ensureRotationSheet(); }
   props().getKeys().forEach(function (k) { if (k.indexOf('DRAFT_') === 0) props().deleteProperty(k); });
   rebuildReportSheet();
   return 'ล้างข้อมูลแล้ว';
