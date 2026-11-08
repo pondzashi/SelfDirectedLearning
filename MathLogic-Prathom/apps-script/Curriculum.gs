@@ -587,3 +587,20 @@ function placementRounds(starts) {
 function rotLabel(topic, round, setNo, repeat) {
   return 'รอบ ' + round + ' · สัปดาห์' + TOPIC_NAMES[topic] + ' · ชุด ' + setNo + '/' + ROT_SETS + (repeat ? ' (ทำซ้ำ)' : '');
 }
+
+/* ======================= ส่วน B/C: แม่แบบที่สอดคล้องกับหัวข้อประจำสัปดาห์ ======================= */
+var TPL_TOPICS = {
+  W01: ['add', 'sub', 'mul'], W02: ['add'], W03: ['div'], W04: ['add', 'mul'], W05: ['mul', 'div'], W06: ['add'], W07: ['add', 'mul'], W08: ['frac', 'mul', 'div'],
+  W09: ['frac'], W10: ['frac', 'sub'], W11: ['frac', 'mul'], W12: ['mul', 'sub'], W13: ['div', 'sub'], W14: ['add', 'sub', 'div'], W15: ['div', 'mul'], W16: ['mul', 'sub'],
+  W17: ['sub', 'add'], W18: ['add', 'mul', 'sub'], W19: ['div', 'sub'], W20: ['mul', 'sub'], W21: ['add', 'sub', 'mul'], W22: ['mul', 'add'],
+  O01: ['add'], O02: ['mul'], O03: ['add'], O04: ['add'], O05: ['sub'], O06: ['add'], O07: ['mul'], O09: ['add'], O10: ['mul', 'div'], O11: ['add'], O13: ['add'], O14: ['sub'],
+  O15: ['mul'], O16: ['mul'], O17: ['frac'], O18: ['add', 'sub'], O19: ['add'], O22: ['add'], O23: ['mul', 'div'],
+  A04: ['add', 'sub', 'mul'], A07: ['add', 'sub', 'mul', 'div'], A08: ['mul', 'div'], A09: ['add'], A10: ['div', 'add'], A11: ['mul'], A12: ['add', 'sub', 'div'], A13: ['mul', 'sub', 'div'],
+  A14: ['add', 'mul'], A15: ['div', 'add'], A16: ['sub', 'add'], A17: ['add', 'sub'], A18: ['add', 'sub'], A19: ['add', 'sub'], A20: ['mul', 'div', 'frac'], A21: ['div'], A22: ['div']
+};
+/** {รหัสแม่แบบ: 1} ของแม่แบบที่เหมาะกับหัวข้อ */
+function topicPrefer(topic) {
+  var o = {};
+  for (var id in TPL_TOPICS) if (TPL_TOPICS[id].indexOf(topic) >= 0) o[id] = 1;
+  return o;
+}

@@ -18,7 +18,7 @@ class Range {
   setValue(x) { this.sh._set(this.r, this.c, x); return this; }
   setNumberFormat(f) {
     if (f !== '@') return this;
-    if (typeof this.r === 'string') { const m = /^([A-Z]):([A-Z])$/.exec(this.r); for (let k = m[1].charCodeAt(0) - 64; k <= m[2].charCodeAt(0) - 64; k++) this.sh.textCols.add(k); }
+    if (typeof this.r === 'string') { const col = (L) => L.split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0); const m = /^([A-Z]+):([A-Z]+)$/.exec(this.r); for (let k = col(m[1]); k <= col(m[2]); k++) this.sh.textCols.add(k); }
     else if (this.nr >= 40) for (let k = this.c; k < this.c + this.nc; k++) this.sh.textCols.add(k);
     return this;
   }
@@ -70,7 +70,7 @@ const gas = {
   HtmlService: { createTemplateFromFile: () => ({ evaluate: () => chain() }), XFrameOptionsMode: { ALLOWALL: 1 } }
 };
 const ctx = vm.createContext(Object.assign({ console, Math, Date, JSON, Object, Array, String, Number, RegExp, Error, Promise }, gas));
-const FILES = ['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'SetBuilder.gs', 'SelfTest.gs', 'DashLogic.gs', 'Store.gs', 'Session.gs', 'Reports.gs', 'Dashboard.gs', 'Code.gs'];
+const FILES = ['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'Curriculum.gs', 'SetBuilder.gs', 'SelfTest.gs', 'DashLogic.gs', 'Store.gs', 'Session.gs', 'Reports.gs', 'Dashboard.gs', 'Code.gs'];
 for (const f of FILES) vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), ctx, { filename: f });
 const G = n => vm.runInContext(n, ctx);
 
@@ -80,29 +80,41 @@ function ok(c, m) { checks++; if (!c) { fails++; console.log('  ✗ ' + m); } }
 /* ---------------- ตัวแทนเด็ก ---------------- */
 const botRng = G('mulberry32')(2026);
 const ABILITY = { addsub: 6, mul: 4, div: 3, fracdec: 5 }; // ขั้นสูงสุดที่ "ทำได้คล่อง"
+const BOT = { p: 0.985, reveal: false };
 function botResult(set, speed) {
   const STEP = G('STEP_BY_ID'), classify = G('classifyError');
   const sections = set.sections.map(sec => {
-    let first = 0, mainFirst = 0, wrong = 0, maxTries = 1;
+    let first = 0, wrong = 0, maxTries = 1;
+    const pageSec = (sec.pages || []).map(() => 0), pageRight = (sec.pages || []).map(() => 0);
+    const pageOf = (idx) => { let k = 0; (sec.pages || []).forEach((pg, j) => { if (idx >= pg.start) k = j; }); return k; };
+    let revealedOne = false;
     const items = sec.items.map((it, idx) => {
       let p = 0.8;
       const st = it.cat in ABILITY ? STEP[it.tag] : null;
       if (st) p = st.no <= ABILITY[it.cat] ? 0.97 : 0.12;
+      else if (sec.kind === 'drill' && !it.review) p = BOT.p;
       if (it.review) p = 0.6;
       const ok1 = botRng() < p;
-      const spp = st ? st.spp : 40;
+      let spp = 40;
+      if (st) spp = st.spp;
+      else if (sec.kind === 'drill') { const pg = sec.pages[pageOf(idx)]; spp = pg.kind === 'review' ? 30 : G('pageSpp')(pg.kind, pg.lvl); }
       const s = spp * (0.55 + botRng() * 0.5) / speed;
-      first += s; if (it.main !== false) mainFirst += s;
+      first += s;
       let tries = 1, revealed = false;
       if (!ok1) { wrong++; tries += 1 + (botRng() < 0.3 ? 1 : 0); maxTries = Math.max(maxTries, tries); }
+      if (BOT.reveal && sec.kind === 'drill' && !it.review && !revealedOne) { revealedOne = true; revealed = true; }
+      if (sec.kind === 'drill' && sec.pages && !it.review) { const k = pageOf(idx); pageSec[k] += s; pageRight[k] += ok1 ? 1 : 0; }
       return { key: it.key, cat: it.cat, tag: it.tag, sig: it.sig, q: it.q, ok1, tries, revealed, sec: s, errType: ok1 ? '' : classify(it, 'x', s), review: !!it.review, reviewId: it.reviewId || '',
-        cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '' };
+        cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '', page: it.page || '' };
     });
     const corr = wrong * 9;
-    const firstSec = sec.kind === 'drill' ? sec.items.reduce((a, it, i) => a + (it.main !== false ? items[i].sec : 0), 0) : first;
-    return { id: sec.id, name: sec.name, kind: sec.kind, skill: sec.skill || '', items, firstSec, correctionSec: corr, totalSec: firstSec + corr, rounds: wrong ? maxTries - 1 : 0, targetSec: sec.targetSec || 0, recSec: sec.recSec || 0, mainCount: sec.mainCount || items.length };
+    const firstSec = sec.kind === 'drill' ? sec.items.reduce((a, it, i) => a + (it.main !== false && !it.review ? items[i].sec : 0), 0) : first;
+    const out = { id: sec.id, name: sec.name, kind: sec.kind, skill: sec.skill || '', items, firstSec, correctionSec: corr, totalSec: firstSec + corr, rounds: wrong ? maxTries - 1 : 0, targetSec: sec.targetSec || 0, recSec: sec.recSec || 0, mainCount: sec.mainCount || items.length };
+    if (sec.id === 'A' && sec.topic) Object.assign(out, { topic: sec.topic, round: sec.round, setNo: sec.setNo, repeat: !!sec.repeat, assessment: !!sec.assessment, xSec: sec.xSec, ySec: sec.ySec,
+      pages: (sec.pages || []).filter(pg => pg.kind !== 'review').map((pg, j) => ({ page: j + 1, sec: pageSec[j], right: pageRight[j], n: pg.n })) });
+    return out;
   });
-  return { childName: ' น้องต้น ', date: set.date, mode: set.mode, placementDay: set.placementDay == null ? null : set.placementDay, title: set.title, totalSec: sections.reduce((a, s) => a + s.totalSec, 0), sections };
+  return { childName: ' น้องต้น ', date: set.date, slot: set.slot || 1, mode: set.mode, placementDay: set.placementDay == null ? null : set.placementDay, title: set.title, totalSec: sections.reduce((a, s) => a + s.totalSec, 0), sections };
 }
 
 /* ---------------- สถานการณ์ ---------------- */
@@ -139,8 +151,8 @@ for (let d = startDay; d <= endDay; d = G('ymdAdd')(d, 1)) {
     const r = G('submitSession')(payload);
     ok(r.ok && !r.duplicate, d + ' submit ok ' + JSON.stringify(r).slice(0, 100));
     ok(mails.length === before + 1, d + ' ต้องมีอีเมลสรุปหลังทำเสร็จ 1 ฉบับ');
-    sessions.push({ d, mode: set.mode, skill: set.meta && set.meta.skill, step: set.meta && set.meta.stepNo, pass: r.summary.drill && r.summary.drill.pass, reviews: set.sections.flatMap(s => s.items).filter(i => i.review).length });
-    log.push(d + ' ' + set.mode + (set.meta && set.meta.skill ? ' ' + set.meta.skill + '#' + set.meta.stepNo + (r.summary.drill && r.summary.drill.pass ? ' ผ่าน' : ' ไม่ผ่าน') : '') + ' reviews=' + sessions[sessions.length - 1].reviews);
+    sessions.push({ d, mode: set.mode, topic: set.meta && set.meta.topic, round: set.meta && set.meta.round, setNo: set.meta && set.meta.setNo, repeat: set.meta && set.meta.repeat, outcome: r.summary.drill && r.summary.drill.outcome, reviews: set.sections.flatMap(s => s.items).filter(i => i.review).length });
+    log.push(d + ' ' + set.mode + (set.meta && set.meta.topic ? ' ' + set.meta.topic + ' r' + set.meta.round + ' #' + set.meta.setNo + (set.meta.repeat ? ' ซ้ำ' : '') + (r.summary.drill && r.summary.drill.outcome ? ' ' + r.summary.drill.outcome : '') : '') + ' reviews=' + sessions[sessions.length - 1].reviews);
     const dup = G('submitSession')(payload);
     ok(dup.duplicate === true, d + ' ส่งซ้ำต้องไม่เพิ่มแถว');
     const again = G('getTodaySet')();
@@ -179,16 +191,25 @@ ok(sessions.some(s => s.reviews > 0), 'ต้องมีข้อทบทว�
 const firstReviewDay = sessions.find(s => s.reviews > 0).d;
 console.log('ข้อทบทวนข้อแรกเข้ามาวันที่', firstReviewDay);
 ok(G('ymdDiff')(firstReviewDay, '2026-11-02') >= 4, 'ข้อทบทวนต้องไม่มาก่อนครบ 3 วันหลังวันที่ผิด');
-// ระดับเดินหน้า
+// หมุนหัวข้อ: ชุดที่ 1-6 ต่อเนื่อง, ชุดที่ 6 ประเมิน, ผ่าน→หัวข้อถัดไป รอบ+1
 const dailies = sessions.filter(s => s.mode === 'daily');
-ok(dailies.some(s => s.pass) && dailies.some(s => s.pass === false), 'มีทั้งผ่านและไม่ผ่านจากบอท (ตรวจกติกา)');
-const skillsSeen = new Set(dailies.map(s => s.skill));
-ok(skillsSeen.size >= 3, 'ต้องหมุนทักษะ: ' + [...skillsSeen].join());
-// กติกา: ถ้าผ่านแล้ว ขั้นของทักษะนั้นครั้งถัดไปต้อง +1
-const lastStep = {};
-let advOk = true;
-dailies.forEach(s => { if (lastStep[s.skill] && lastStep[s.skill].pass && s.step !== lastStep[s.skill].step + 1) advOk = false; if (lastStep[s.skill] && lastStep[s.skill].pass === false && s.step !== lastStep[s.skill].step) advOk = false; lastStep[s.skill] = s; });
-ok(advOk, 'ผ่าน → ขั้นถัดไป / ไม่ผ่าน → ขั้นเดิม');
+ok(dailies.length > 15, 'มีชุดประจำวันมากพอ: ' + dailies.length);
+const topicsSeen = new Set(dailies.map(s => s.topic));
+ok(topicsSeen.size >= 3, 'ต้องหมุนหัวข้อ: ' + [...topicsSeen].join());
+let rotOk = true; const rotWhy = [];
+for (let i = 1; i < dailies.length; i++) {
+  const a = dailies[i - 1], b = dailies[i];
+  if (a.setNo < 6) { if (!(b.topic === a.topic && b.setNo === a.setNo + 1 && b.round === a.round)) { rotOk = false; rotWhy.push(a.d + '→' + b.d); } }
+  else if (a.outcome === 'pass' || a.outcome === 'flag') { if (!(b.topic === G('nextTopic')(a.topic) && b.setNo === 1 && !b.repeat)) { rotOk = false; rotWhy.push('adv ' + a.d); } }
+  else if (!a.repeat) { if (!(b.topic === a.topic && b.setNo === 1 && b.repeat === true && b.round === a.round)) { rotOk = false; rotWhy.push('rep ' + a.d); } }
+}
+ok(rotOk, 'ลำดับสัปดาห์/ชุด/ผลประเมินถูกต้อง ' + rotWhy.join(','));
+ok(dailies.some(s => s.setNo === 6 && s.outcome === 'pass'), 'มีชุดประเมินที่ผ่านอย่างน้อย 1 ครั้ง');
+ok(dailies.every(s => s.setNo === 6 ? !!s.outcome : !s.outcome), 'ผลประเมินมีเฉพาะชุดที่ 6');
+const rotNow = G('readRotation')();
+ok(Object.values(rotNow.rounds).every(r => r >= 1), 'รอบของทุกหัวข้ออ่านจากแท็บ "รอบหัวข้อ" ได้');
+const L2 = G('placementRounds');
+ok(rotNow.rounds.add === rotNow.rounds.sub || dailies.some(s => s.topic === 'add' && s.outcome === 'pass'), 'รอบเริ่มต้นบวก=ลบ (บันไดเดียวกัน) หรือบวกขึ้นรอบแล้ว');
 // อีเมล
 const subj = mails.map(m => m.subject);
 console.log('จำนวนอีเมล:', mails.length, ' (สรุปรายวัน ' + subj.filter(s => /—/.test(s)).length + ', รายสัปดาห์ ' + subj.filter(s => /สรุปสัปดาห์/.test(s)).length + ', รายเดือน ' + subj.filter(s => /รายงานประจำเดือน/.test(s)).length + ')');
@@ -241,7 +262,7 @@ for (const k of Object.keys(cacheStore)) delete cacheStore[k]; // จำลอ�
 ok(G('dash_check')('4321').ok === true, 'Dashboard: PIN ถูกเข้าได้');
 const bun = G('dash_getBundle')('4321');
 ok(bun.kpi.sessions === sessions.length && bun.series.dates.length === sessions.length, 'Dashboard: จำนวนครั้งที่ทำตรงกับข้อมูลจริง (' + bun.kpi.sessions + ')');
-ok(bun.skills.length === 4 && bun.calendar.length === 42 && bun.radar.length === 7 && bun.report.periods.length === 2, 'Dashboard: ทักษะ 4 / ปฏิทิน 42 วัน / เรดาร์ 7 หมวด / ช่วงวัดผล 2');
+ok(bun.topics.length === 5 && /^รอบ [0-9]+ · สัปดาห์/.test(bun.rotation.label) && Array.isArray(bun.trend) && bun.calendar.length === 42 && bun.radar.length === 7 && bun.report.periods.length === 2, 'Dashboard: หัวข้อ 5 / ปฏิทิน 42 วัน / เรดาร์ 7 หมวด / ช่วงวัดผล 2');
 ok(bun.errors30.total > 0 && bun.errors30.types.length > 0 && Array.isArray(bun.alerts) && bun.alerts.length > 0, 'Dashboard: มีสถิติข้อผิดพลาดและข้อควรสนใจ');
 ok(bun.history.length > 0 && bun.history[0].date >= bun.history[bun.history.length - 1].date && bun.history.length <= 60, 'Dashboard: ประวัติเรียงล่าสุดก่อน');
 ok(bun.placement.done === true && bun.thresholds.green === 85 && bun.thresholds.yellow === 60 && bun.child === 'น้องต้น', 'Dashboard: ค่าเกณฑ์ ชื่อ และสถานะวัดระดับ');
@@ -261,12 +282,98 @@ CLOCK.today = '2026-12-31'; mails.length = 0; G('dailyJob')();
 ok(mails.length === 1 && /คลังข้อสอบกำลังจะหมด/.test(mails[0].htmlBody), 'รายงานรายเดือนเตือนคลังข้อสอบเหลือน้อย');
 // ข้อใน sheet ไม่มีค่าแปลก
 const dsh = book.getSheetByName('ผลรายวัน');
-const drows = dsh.getRange(2, 1, dsh.getLastRow() - 1, 28).getValues();
-ok(drows.every(r => r.length === 28 && !r.some(x => typeof x === 'number' && isNaN(x))), 'ผลรายวันไม่มี NaN');
+const drows = dsh.getRange(2, 1, dsh.getLastRow() - 1, 37).getValues();
+ok(drows.every(r => r.length === 37 && !r.some(x => typeof x === 'number' && isNaN(x))), 'ผลรายวันไม่มี NaN');
 ok(drows.length === sessions.length, 'ผลรายวันมี ' + drows.length + ' แถว = จำนวนครั้งที่ทำ ' + sessions.length);
 // clearTestData
 G('clearTestData')();
 ok(G('getState')().placementDays.length === 0 && book.getSheetByName('ผลรายวัน').getLastRow() === 1, 'clearTestData ล้างผลและสถานะ');
+
+/* ============ สถานการณ์: ขาดเรียน + ชุดชดเชย + ชุดที่ 6 ไม่ผ่านต้องทำซ้ำ ============ */
+console.log('\n== สถานการณ์สัปดาห์ละเรื่อง (ขาดวัน/ชดเชย/ทำซ้ำ)');
+G('setSetting')('START_DATE', '2026-11-02');
+{
+  const st0 = G('getState')(); st0.placementDone = true; st0.benchmarks = ['2026-11']; G('setState')(st0);
+  G('writeRotation')(G('rotInit')(), G('rotRounds0')(), null);
+}
+function scaleA(payload, totalTarget) { // ตั้งเวลารวมของส่วน A (ทำเอง + แก้) ให้เท่าที่ต้องการ
+  const A = payload.sections[0], corr = A.correctionSec, k = (totalTarget - corr) / A.firstSec;
+  A.items.forEach(i => { if (!i.review) i.sec *= k; });
+  A.pages.forEach(pg => { pg.sec *= k; });
+  A.firstSec *= k; A.totalSec = A.firstSec + corr;
+  return payload;
+}
+function play(day, o) {
+  o = o || {};
+  CLOCK.today = day;
+  const set = o.catchup ? G('getCatchupSet')() : G('getTodaySet')();
+  if (set.status !== 'ready') return { set };
+  BOT.reveal = !!o.reveal; BOT.p = o.p == null ? 0.995 : o.p;
+  const payload = botResult(set, 1);
+  if (set.mode === 'daily') scaleA(payload, set.meta.xSec * (o.t == null ? 0.7 : o.t));
+  BOT.reveal = false; BOT.p = 0.985;
+  const r = G('submitSession')(payload);
+  return { set, r, payload, mail: mails[mails.length - 1] };
+}
+const rotOf = () => G('readRotation')();
+// 1) จันทร์ ชุดที่ 1 · ข้ามอังคาร/พุธ · พฤหัส ชุดที่ 2 + ชดเชย ชุดที่ 3
+let a = play('2026-11-02');
+ok(a.set.meta.topic === 'add' && a.set.meta.setNo === 1 && a.r.ok && a.set.slot === 1, 'เซนาริโอ: จันทร์ = บวก ชุด 1');
+let again = G('getTodaySet')();
+ok(again.status === 'done' && again.catchup && again.catchup.available && again.catchup.remaining === 5, 'ทำชุดปกติแล้วมีปุ่มชดเชย (เหลือ 5 ชุด)');
+a = play('2026-11-05'); // ข้ามอังคาร พุธ
+ok(a.set.meta.topic === 'add' && a.set.meta.setNo === 2, 'ขาดไป 2 วัน เนื้อหาไม่ข้าม: พฤหัส = บวก ชุด 2 (ไม่ใช่ชุด 4)');
+const cu = play('2026-11-05', { catchup: true });
+ok(cu.set.status === 'ready' && cu.set.slot === 2 && cu.set.catchup && /ชดเชย/.test(cu.set.title) && cu.set.meta.setNo === 3 && cu.r.ok, 'ชุดชดเชย = ชุดที่ 3 (slot 2) ส่งได้');
+ok(G('findDailyRows')('2026-11-05').length === 2 && rotOf().rot.setNo === 4, 'วันเดียวมี 2 แถว และตัวชี้ไปชุดที่ 4');
+ok(G('getCatchupSet')().status !== 'ready' && !G('getTodaySet')().catchup, 'ชดเชยได้ไม่เกิน 2 ชุดต่อวัน (ชุดที่สามถูกปฏิเสธ)');
+const dupSlot = G('submitSession')(Object.assign({}, cu.payload));
+ok(dupSlot.duplicate === true && G('findDailyRows')('2026-11-05').length === 2, 'ส่งชุดชดเชยซ้ำไม่เพิ่มแถว');
+a = play('2026-11-06'); ok(a.set.meta.setNo === 4, 'ศุกร์ = ชุด 4');
+a = play('2026-11-07'); ok(a.set.meta.setNo === 5, 'เสาร์ = ชุด 5');
+// 2) ชุดที่ 6 ประเมิน · ผ่าน (เร็ว) → ลบ รอบ 1, บวก = รอบ 2
+a = play('2026-11-09', { t: 0.8 });
+ok(a.set.meta.setNo === 6 && a.set.meta.assessment && a.r.summary.drill.outcome === 'pass', 'ชุดที่ 6: ผ่านเมื่อไม่ดูเฉลยและไม่เกิน X');
+ok(rotOf().rot.topic === 'sub' && rotOf().rot.setNo === 1 && rotOf().rounds.add === 2 && rotOf().rounds.sub === 1, 'ผ่าน → ไปสัปดาห์ลบ รอบ 1 · บวกขึ้นรอบ 2');
+ok(G('getTodaySet')().catchup === null, 'หลังชุดที่ 6 ไม่มีปุ่มชดเชย');
+// 3) สัปดาห์ลบ: ชุดที่ 6 เวลาอยู่ระหว่าง X กับ Y → ผ่านแต่ติดธง
+for (const d of ['2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14']) { a = play(d); ok(a.set.meta.topic === 'sub', d + ' ลบ'); }
+a = play('2026-11-16', { t: 1.2 });
+ok(a.r.summary.drill.outcome === 'flag' && /ผ่านแต่ช้า/.test(a.mail.htmlBody), 'ผ่านแต่ช้า: อีเมลระบุธง');
+ok(rotOf().rot.topic === 'mul' && rotOf().rounds.sub === 2, 'ผ่าน(ช้า) นับเป็นผ่าน: ลบขึ้นรอบ 2 แล้วไปคูณ');
+// 4) คูณ: ชุดที่ 6 ดูเฉลย → ไม่ผ่าน → ทำซ้ำสัปดาห์คูณ รอบเดิม
+for (const d of ['2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21']) play(d);
+a = play('2026-11-23', { reveal: true, t: 0.7 });
+ok(a.r.summary.drill.outcome === 'repeat' && /ต้องทำหัวข้อนี้ซ้ำ/.test(a.mail.htmlBody), 'ดูเฉลย = ไม่ผ่าน: อีเมลแจ้งทำซ้ำ');
+ok(rotOf().rot.topic === 'mul' && rotOf().rot.repeat === true && rotOf().rot.setNo === 1 && rotOf().rounds.mul === 1, 'ไม่ผ่าน → ทำสัปดาห์คูณซ้ำ รอบคงเดิม');
+const rep1 = play('2026-11-24');
+ok(rep1.set.meta.repeat === true && /ทำซ้ำ/.test(rep1.set.sections[0].sub), 'ชุดของสัปดาห์ทำซ้ำติดป้ายซ้ำ');
+for (const d of ['2026-11-25', '2026-11-26', '2026-11-27', '2026-11-28']) play(d);
+// 5) ซ้ำแล้วช้าเกิน Y → ไปต่อหัวข้อถัดไป (ซ้ำได้ครั้งเดียว)
+a = play('2026-11-30', { t: 1.7 });
+ok(a.r.summary.drill.outcome === 'repeat' && a.r.summary.drill.event === 'moveon', 'ซ้ำแล้วยังไม่ผ่าน → moveon');
+ok(rotOf().rot.topic === 'div' && rotOf().rot.repeat === false && rotOf().rounds.mul === 1, 'ไปหัวข้อหาร รอบคูณคงเดิม');
+ok(/ไปหัวข้อถัดไป/.test(rotOf().hist.mul.last), 'แท็บรอบหัวข้อบันทึกผลสัปดาห์คูณ');
+// 6) ข้อมูลเก่า 28 คอลัมน์ยังอ่านได้ (นับเป็นชุดที่ 1 ของวัน)
+const dsh2 = book.getSheetByName('ผลรายวัน');
+const legacy = Array(28).fill(''); legacy[0] = '2026-10-26'; legacy[1] = 'ประจำวัน'; legacy[2] = 'บวกลบ'; legacy[3] = 'ขั้น 3'; legacy[4] = 20; legacy[5] = 25; legacy[7] = 300; legacy[8] = 360; legacy[11] = 'ผ่าน'; legacy[26] = 20; legacy[27] = 'เก่า';
+dsh2.appendRow(legacy);
+ok(G('findDailyRows')('2026-10-26').length === 1 && G('slotOfRow')(G('findDailyRows')('2026-10-26')[0]) === 1, 'แถวเก่า 28 คอลัมน์ = ชุดที่ 1');
+// 7) Dashboard กับข้อมูล 2 แถวต่อวัน
+CLOCK.today = '2026-11-30';
+G('setSetting')('PARENT_PIN', '4321'); for (const k of Object.keys(cacheStore)) delete cacheStore[k];
+const b2 = G('dash_getBundle')('4321');
+ok(b2.kpi.month.sets > b2.kpi.month.days && b2.kpi.month.days <= 30, 'Dashboard: เดือนนี้นับ "วัน" ไม่ซ้ำ ไม่ใช่นับแถว (' + b2.kpi.month.days + ' วัน ' + b2.kpi.month.sets + ' ชุด)');
+ok(b2.rotation.topicName === 'หาร' && /สัปดาห์หาร/.test(b2.rotation.label), 'Dashboard: แสดงสัปดาห์ปัจจุบัน ' + b2.rotation.label);
+ok(b2.history.some(h => h.slot === 2 && h.setNo === 3), 'Dashboard: ประวัติมีชุดชดเชย');
+const mulTrend = b2.trend.find(t => t.topic === 'mul');
+ok(mulTrend.points.length === 2 && mulTrend.points[0].outcome === 'ไม่ผ่าน' && mulTrend.points[1].repeat === true, 'Dashboard: แนวโน้มเวลาชุดประเมินของคูณ (ครั้งแรก + ซ้ำ)');
+const c5 = b2.calendar.find(c => c.date === '2026-11-05');
+ok(c5 && (c5.status === 'pass' || c5.status === 'done'), 'Dashboard: วันที่มี 2 ชุดแสดงสถานะวันเดียว');
+const dses = G('dash_getSession')('4321', '2026-11-05');
+ok(dses.sets.length === 2 && dses.sets.every(x => x.pageCount === 10), 'Dashboard: รายละเอียดวัน 2 ชุด + เวลาแต่ละหน้า');
+ok(b2.kpi.sessions === G('readDailyRows')(500).length, 'Dashboard: นับชุดทั้งหมดตรงกับแถวผลรายวัน');
+
 console.log('\nสรุป: ตรวจ ' + checks + ' รายการ ผิด ' + fails);
 if (fails) { console.log(logs.slice(-5).join('\n')); }
 process.exit(fails ? 1 : 0);

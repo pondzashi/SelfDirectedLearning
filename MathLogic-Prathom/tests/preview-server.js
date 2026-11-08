@@ -6,7 +6,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm'), http = require('http');
 const DIR = path.join(__dirname, '..', 'apps-script');
 const ctx = vm.createContext({ console, Math, Date, JSON, Object, Array, String, Number, RegExp, Error });
-['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'SetBuilder.gs'].forEach(f => vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), ctx, { filename: f }));
+['Core.gs', 'Generators.gs', 'Templates.gs', 'BankSeed.gs', 'Curriculum.gs', 'SetBuilder.gs'].forEach(f => vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), ctx, { filename: f }));
 const G = n => vm.runInContext(n, ctx);
 const port = +process.argv[2] || 8765;
 

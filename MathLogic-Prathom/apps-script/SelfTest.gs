@@ -39,7 +39,7 @@ function selfTestAll(ok) {
   // ----- ชุดข้อ -----
   function mkCtx(extra) {
     var c = { levels: { addsub: 3, mul: 1, div: 1, fracdec: 1, tiers: { word: 2, observe: 2, analytic: 2 } }, skill: 'addsub',
-      usedSigs: {}, recentTpl: {}, bank: bankRows, bankUsed: {}, reviews: [] };
+      usedSigs: {}, recentTpl: {}, bank: bankRows, bankUsed: {}, reviews: [], rot: rotInit(), rounds: rotRounds0() };
     for (var k in (extra || {})) c[k] = extra[k];
     return c;
   }
@@ -48,9 +48,10 @@ function selfTestAll(ok) {
   setRng(mulberry32(12345));
   var d2 = buildDailySet(mkCtx());
   ok(JSON.stringify(d1) === JSON.stringify(d2), 'ชุดข้อวันเดียวกัน (seed เดียวกัน) ต้องออกเหมือนเดิม');
-  var A = d1.sections[0], B = d1.sections[1], C = d1.sections[2], st = stepOf('addsub', 3);
-  ok(A.mainCount === st.n && A.items.length === st.n && A.targetSec === st.n * st.spp, 'ส่วน A มี ' + st.n + ' ข้อ ขั้นเดียวกันทั้งหมด');
-  ok(A.items.every(function (x) { return x.tag === st.id; }), 'ทุกข้อใน A เป็นขั้นเดียวกัน');
+  var A = d1.sections[0], B = d1.sections[1], C = d1.sections[2], plan0 = setPlan('add', 1, 1);
+  ok(A.mainCount === 100 && A.items.length === 100 && A.targetSec === setXSec('add', 1, 1) && A.topic === 'add' && A.setNo === 1, 'ส่วน A ชุดที่ 1 สัปดาห์บวก รอบ 1 มี 100 ข้อ (ได้ ' + A.items.length + ')');
+  ok(A.items.every(function (x) { return x.topic === 'add' && x.page >= 1 && x.key.indexOf('PG:') === 0; }) && A.pages.length === 10, 'ทุกข้อใน A เป็นหัวข้อบวก แบ่งเป็น 10 หน้า');
+  ok(d1.meta.topic === 'add' && d1.meta.round === 1 && d1.meta.setNo === 1 && d1.meta.xSec === A.targetSec && d1.meta.ySec > d1.meta.xSec, 'meta ของชุดมีหัวข้อ/รอบ/ชุด/X/Y');
   ok(B.items.length === DAILY_B_COUNT && C.items.length === DAILY_C_COUNT, 'B/C มีข้อครบ');
   ok(B.items.every(function (x) { return x.cat === 'observe'; }), 'B เป็นหมวดการสังเกต');
   ok(C.items.every(function (x) { return x.cat === 'word' || x.cat === 'analytic'; }), 'C เป็นโจทย์ปัญหา/คิดวิเคราะห์');
@@ -61,12 +62,12 @@ function selfTestAll(ok) {
 
   // ทบทวนแบบเว้นช่วง: ข้อที่ผิดกลับมาด้วยตัวเลขใหม่ แนวคิดเดิม
   setRng(mulberry32(7));
-  var rv = [{ id: 'r1', key: 'GEN:AS02', cat: 'addsub' }, { id: 'r0', key: 'GEN:AS07', cat: 'addsub' }, { id: 'r2', key: 'TPL:W05', cat: 'word', tier: 2 }, { id: 'r3', key: 'TPL:O13', cat: 'observe', tier: 2 }, { id: 'r4', key: 'FIX:F40', cat: 'analytic' }];
+  var rv = [{ id: 'r1', key: 'PG:add.pairs10', cat: 'addsub', tier: 1 }, { id: 'r0', key: 'GEN:AS07', cat: 'addsub' }, { id: 'r2', key: 'TPL:W05', cat: 'word', tier: 2 }, { id: 'r3', key: 'TPL:O13', cat: 'observe', tier: 2 }, { id: 'r4', key: 'FIX:F40', cat: 'analytic' }];
   var d3 = buildDailySet(mkCtx({ reviews: rv }));
   var allItems = [].concat.apply([], d3.sections.map(function (s) { return s.items; }));
   var revItems = allItems.filter(function (x) { return x.review; });
   ok(revItems.length === 4, 'ข้อทบทวนต้องเข้ามาครบ 4 ข้อ (ได้ ' + revItems.length + ')');
-  ok(revItems.some(function (x) { return x.key === 'GEN:AS02'; }) && revItems.some(function (x) { return x.key === 'TPL:W05'; }) && revItems.some(function (x) { return x.key === 'TPL:O13'; }), 'ทบทวนแนวคิดเดิม');
+  ok(revItems.some(function (x) { return x.key === 'PG:add.pairs10'; }) && revItems.some(function (x) { return x.key === 'TPL:W05'; }) && revItems.some(function (x) { return x.key === 'TPL:O13'; }), 'ทบทวนแนวคิดเดิม');
   ok(d3.reviewIds.length === 4 && d3.reviewIds.indexOf('r0') < 0, 'รายการ reviewIds ต้องครบ และข้อทบทวนของขั้นที่ยังไม่ถึง (AS07 ขณะที่ระดับ = 3) ต้องรอไว้ก่อน');
   ok(d3.sections[1].items.length === DAILY_B_COUNT && d3.sections[2].items.length === DAILY_C_COUNT, 'ข้อทบทวนต้องไม่ทำให้จำนวนข้อ B/C เกิน');
 

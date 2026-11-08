@@ -109,19 +109,23 @@ function sendSessionEmail(sm) {
   }).join('');
   var h = '<div style="' + MAIL_CSS + '"><h2 style="margin:0 0 4px;">' + name + ' ทำแบบฝึกเสร็จแล้ว ✅</h2><div style="color:#5f6368;">' + esc(thaiDate(sm.date)) + ' · ' + esc(sm.title || sm.mode) + '</div>';
   if (sm.drill) {
-    h += '<p style="margin:12px 0;padding:10px;border-radius:8px;background:' + (sm.drill.pass ? '#e6f4ea' : '#fef7e0') + ';"><b>ส่วน A ' + esc(sm.skillName) + ' ขั้น ' + sm.drill.stepNo + ' (' + esc(sm.drill.stepName) + '): ' + (sm.drill.pass ? '🎉 ผ่าน' : 'ยังไม่ผ่าน') + '</b>' + (sm.drill.reason ? '<br>' + esc(sm.drill.reason) : '') + '</p>';
+    var d = sm.drill, bg = d.assessment ? (d.outcome === 'pass' ? '#e6f4ea' : d.outcome === 'flag' ? '#fff4d6' : '#fef0e6') : '#eef3fb';
+    var hd = d.assessment ? 'ประเมินสัปดาห์' + d.topicName + ': ' + (d.outcome === 'pass' ? '🎉 ผ่าน' : d.outcome === 'flag' ? '⚑ ผ่านแต่ช้า (ติดธง)' : '↻ ต้องทำหัวข้อนี้ซ้ำ') : 'ส่วน A · ' + d.label;
+    h += '<p style="margin:12px 0;padding:10px;border-radius:8px;background:' + bg + ';"><b>' + esc(hd) + '</b><br>เวลารวมส่วน A (รวมเวลาแก้) ' + mmss(d.totalSec) +
+      (d.assessment ? ' · เป้า X ' + mmss(d.x) + ' · เกณฑ์สูงสุด Y ' + mmss(d.y) : ' · เป้าอ้างอิง ' + mmss(d.x)) + (d.reason ? '<br>' + esc(d.reason) : '') +
+      (d.pages && d.pages.length ? '<br><span style="font-size:13px;color:#5f6368;">เวลาแต่ละหน้า (วินาที): ' + d.pages.join(', ') + '</span>' : '') + (d.stale ? '<br><i>ชุดนี้ไม่ตรงสถานะปัจจุบัน จึงไม่เลื่อนสถานะ</i>' : '') + '</p>';
   }
   h += '<table style="border-collapse:collapse;width:100%;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>ส่วน</th><th ' + tdS() + '>ถูกรอบแรก</th><th ' + tdS() + '>เวลา</th><th ' + tdS() + '>รอบแก้</th><th ' + tdS() + '>ข้อผิดพลาด</th></tr>' + rows + '</table>';
   h += '<p>' + esc(sm.note || '') + '</p>';
-  if (sm.drill && sm.drill.stuck) h += '<p style="color:#c5221f;"><b>⚠ ติดขั้นเดิมมา ' + sm.drill.stuck + ' ครั้งแล้ว</b> ควรนั่งดูวิธีคิดด้วยกันสักครั้ง (ระบบจะสลับไปฝึกทักษะอื่นก่อน)</p>';
   if (sm.placement) {
-    h += '<h3>ผลวัดระดับ → ขั้นเริ่มต้น</h3><ul>' + SKILLS.map(function (sk) { var p = sm.placement.starts[sk]; return '<li>' + esc(SKILL_NAMES[sk]) + ': เริ่มที่ขั้น ' + p.no + ' (' + esc(p.name) + ')</li>'; }).join('') + '</ul>';
+    h += '<h3>ผลวัดระดับ → ขั้นเริ่มต้น</h3><ul>' + SKILLS.map(function (sk) { var p = sm.placement.starts[sk]; return '<li>' + esc(SKILL_NAMES[sk]) + ': ทำได้ถึงขั้น ' + p.no + ' (' + esc(p.name) + ')</li>'; }).join('') + '</ul>' +
+      (sm.placement.rounds ? '<p><b>รอบเริ่มต้นของแต่ละหัวข้อ:</b> ' + TOPICS.map(function (t) { return esc(TOPIC_NAMES[t]) + ' รอบ ' + sm.placement.rounds[t]; }).join(' · ') + '</p>' : '');
   }
   if (sm.benchmark) {
     h += '<h3>ผลแบบวัดผล ' + esc(sm.benchmark.label) + '</h3><ul>' + CATS.map(function (c) { var s = sm.benchmark.stats[c]; return s ? '<li>' + esc(CAT_NAMES[c]) + ': ' + s.pct + '%' + (SPEED_CATS.indexOf(c) >= 0 ? ' (' + s.spi + ' วินาที/ข้อ)' : '') + '</li>' : ''; }).join('') + '</ul>';
   }
   h += '<p style="color:#5f6368;font-size:13px;">ข้อที่ผิดจะกลับมาทบทวนอีกครั้งหลัง 3 วันและ 1 สัปดาห์ (ตอนนี้รอทบทวน ' + (sm.pendingReviews || 0) + ' รายการ)</p></div>';
-  var subj = '[ฝึกคณิต] ' + childLabel() + ' ' + sm.date + ' — ' + (sm.drill ? (sm.drill.pass ? 'ผ่าน ' : 'ยังไม่ผ่าน ') + sm.skillName + ' ' : '') + sm.sections.map(function (s) { return s.id + ' ' + s.right + '/' + s.total; }).join(' ');
+  var subj = '[ฝึกคณิต] ' + childLabel() + ' ' + sm.date + ' — ' + (sm.drill ? (sm.drill.assessment ? (sm.drill.outcome === 'pass' ? 'ผ่านสัปดาห์' : sm.drill.outcome === 'flag' ? 'ผ่าน(ช้า)สัปดาห์' : 'ทำซ้ำสัปดาห์') + sm.drill.topicName + ' ' : 'ชุด ' + sm.drill.setNo + '/' + ROT_SETS + ' ' + sm.drill.topicName + ' ') : '') + sm.sections.map(function (s) { return s.id + ' ' + s.right + '/' + s.total; }).join(' ');
   sendMail(subj, h);
 }
 
@@ -129,7 +133,7 @@ function weeklyJob() { sendWeeklySummary(); }
 function sendWeeklySummary() {
   var cfg = getSettings(), today = todayYmd(), from = ymdAdd(today, -6);
   var rows = readDailyRows(60).filter(function (r) { return r[0] >= from && r[0] <= today; });
-  var items = readItemRows(2500).filter(function (r) { return r[0] >= from && r[0] <= today && Number(r[7]) !== 1; });
+  var items = readItemRowsSince(from).filter(function (r) { return r[0] <= today && Number(r[7]) !== 1; });
   var err = {};
   items.forEach(function (r) { var e = String(r[11] || 'ตอบผิด'); err[e] = (err[e] || 0) + 1; });
   var errList = Object.keys(err).sort(function (a, b) { return err[b] - err[a]; }).slice(0, 5);
@@ -138,12 +142,22 @@ function sendWeeklySummary() {
   var tr = rows.map(function (r) {
     return '<tr><td ' + tdS() + '>' + esc(thaiDate(r[0])) + '</td><td ' + tdS() + '>' + esc(r[1]) + '</td><td ' + tdS() + '>' + esc((r[2] || '') + ' ' + (r[3] || '')) + '</td><td ' + tdS('text-align:center;') + '>' + esc(r[11]) + '</td><td ' + tdS('text-align:center;') + '>' + (pct(r[4], r[5]) == null ? '–' : pct(r[4], r[5]) + '%') + '</td><td ' + tdS('text-align:center;') + '>' + (pct(r[12], r[13]) == null ? '–' : pct(r[12], r[13]) + '%') + '</td><td ' + tdS('text-align:center;') + '>' + (pct(r[19], r[20]) == null ? '–' : pct(r[19], r[20]) + '%') + '</td></tr>';
   }).join('');
-  var passN = rows.filter(function (r) { return r[11] === 'ผ่าน'; }).length, drillN = rows.filter(function (r) { return r[11] === 'ผ่าน' || r[11] === 'ไม่ผ่าน'; }).length;
+  var assessRows = rows.filter(function (r) { return r[11] && r[11] !== '-'; }), passN = assessRows.filter(function (r) { return String(r[11]).indexOf('ผ่าน') === 0; }).length, drillN = assessRows.length;
+  var dayN = Object.keys(rows.reduce(function (o, r) { o[r[0]] = 1; return o; }, {})).length;
   var h = '<div style="' + MAIL_CSS + '"><h2 style="margin:0 0 4px;">สรุปประจำสัปดาห์ของ' + esc(childLabel()) + '</h2><div style="color:#5f6368;">' + esc(thaiDate(from)) + ' – ' + esc(thaiDate(today)) + '</div>';
-  h += '<p>ทำแบบฝึก <b>' + rows.length + '</b> วัน' + (drillN ? ' · ผ่านส่วน A <b>' + passN + '/' + drillN + '</b> ครั้ง' : '') + '</p>';
+  h += '<p>ทำแบบฝึก <b>' + dayN + '</b> วัน (<b>' + rows.length + '</b> ชุด)' + (drillN ? ' · ผ่านการประเมินสัปดาห์ <b>' + passN + '/' + drillN + '</b> ครั้ง' : '') + '</p>';
   if (rows.length) h += '<table style="border-collapse:collapse;width:100%;font-size:14px;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>วัน</th><th ' + tdS() + '>ประเภท</th><th ' + tdS() + '>ส่วน A</th><th ' + tdS() + '>ผล A</th><th ' + tdS() + '>A ถูก</th><th ' + tdS() + '>B ถูก</th><th ' + tdS() + '>C ถูก</th></tr>' + tr + '</table>';
   else h += '<p style="color:#c5221f;">สัปดาห์นี้ยังไม่มีการทำแบบฝึก</p>';
-  h += '<h3>ขั้นปัจจุบัน</h3><ul>' + SKILLS.map(function (sk) { var s = stepOf(sk, L[sk]); return '<li>' + esc(SKILL_NAMES[sk]) + ': ขั้น ' + s.no + ' — ' + esc(s.name) + (L.fails[sk] >= cfg.MAX_REPEATS ? ' <b style="color:#c5221f;">(ติดอยู่ ' + L.fails[sk] + ' ครั้ง)</b>' : '') + '</li>'; }).join('') + '</ul>';
+  if (assessRows.length) {
+    h += '<h3>ผลประเมินสัปดาห์ (ชุดที่ 6)</h3><table style="border-collapse:collapse;width:100%;font-size:14px;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>หัวข้อ</th><th ' + tdS() + '>ผล</th><th ' + tdS() + '>เวลา (รวมแก้)</th><th ' + tdS() + '>เป้า X / สูงสุด Y</th></tr>' + assessRows.map(function (r) {
+      var o = String(r[11]), col = o === 'ผ่าน' ? '#137333' : o === 'ผ่าน(ช้า)' ? '#b06000' : '#c5221f';
+      return '<tr><td ' + tdS() + '>' + esc(r[DC.topic] + ' รอบ ' + r[DC.round]) + (r[DC.repeat] ? ' (ซ้ำ)' : '') + '</td><td ' + tdS('font-weight:bold;color:' + col + ';') + '>' + esc(o === 'ผ่าน(ช้า)' ? '⚑ ผ่านแต่ช้า' : o === 'ผ่าน' ? 'ผ่าน' : 'ทำซ้ำ') + '</td><td ' + tdS('text-align:center;') + '>' + mmss(Number(r[7])) + '</td><td ' + tdS('text-align:center;') + '>' + mmss(Number(r[DC.x])) + ' / ' + mmss(Number(r[DC.y])) + '</td></tr>';
+    }).join('') + '</table>';
+  }
+  var rsn = readRotation();
+  h += '<h3>สถานะหัวข้อ</h3><p>ตอนนี้: <b>' + esc(rotLabel(rsn.rot.topic, planRound(rsn.rounds[rsn.rot.topic]), rsn.rot.setNo, rsn.rot.repeat)) + '</b></p><ul>' + TOPICS.map(function (t) {
+    var hs = rsn.hist[t]; return '<li>' + esc(TOPIC_NAMES[t]) + ': รอบ ' + rsn.rounds[t] + (hs.last ? ' · ผลสัปดาห์ล่าสุด: ' + esc(hs.last) : '') + '</li>';
+  }).join('') + '</ul>';
   if (!st.placementDone) h += '<p>ยังอยู่ระหว่างแบบวัดระดับ (ทำแล้ว ' + st.placementDays.length + '/' + PLACEMENT_DAYS + ' วัน)</p>';
   if (errList.length) h += '<h3>ข้อผิดพลาดที่พบบ่อย</h3><ul>' + errList.map(function (e) { return '<li>' + esc(e) + ' × ' + err[e] + '</li>'; }).join('') + '</ul>';
   h += '<p style="color:#5f6368;font-size:13px;">รอทบทวน ' + countPendingReviews() + ' รายการ</p>' + dashLinkHtml() + '</div>';
@@ -172,7 +186,8 @@ function sendMonthlyReport() {
   var rows = readDailyRows(80).filter(function (r) { return ymdMonth(r[0]) === mon; });
   var low = lowBankReport(), np = model.periods.length;
   var h = '<div style="' + MAIL_CSS + 'max-width:760px;"><h2 style="margin:0 0 4px;">รายงานประจำเดือน ' + esc(thaiMonthLabel(today + '')) + ' ของ' + esc(childLabel()) + '</h2>';
-  h += '<p>ทำแบบฝึกเดือนนี้ <b>' + rows.length + '</b> วัน</p><p style="padding:10px;border-radius:8px;background:#f1f3f4;"><b>' + esc(model.summary) + '</b></p>';
+  var dayN = Object.keys(rows.reduce(function (o, r) { o[r[0]] = 1; return o; }, {})).length;
+  h += '<p>ทำแบบฝึกเดือนนี้ <b>' + dayN + '</b> วัน (<b>' + rows.length + '</b> ชุด)</p><p style="padding:10px;border-radius:8px;background:#f1f3f4;"><b>' + esc(model.summary) + '</b></p>';
   if (np) {
     var th = '<tr style="background:#f1f3f4;"><th ' + tdS() + '>หมวด</th>' + model.periods.map(function (p) { return '<th ' + tdS() + '>' + esc(p.label) + '</th>'; }).join('') + (np >= 2 ? '<th ' + tdS() + '>เทียบเดือนก่อน</th><th ' + tdS() + '>เทียบเริ่มต้น</th>' : '') + '</tr>';
     var last = np - 1, body = model.cats.map(function (c) {

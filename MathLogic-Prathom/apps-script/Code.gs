@@ -52,7 +52,7 @@ function setup() {
   function head(name, headers, widths, textCols) {
     var sh = getSheet(name);
     (textCols || []).forEach(function (c) { sh.getRange(c + ':' + c).setNumberFormat('@'); });  // วันที่/ข้อความ เก็บเป็นข้อความล้วน ไม่ให้ชีตแปลงเป็นวันที่เอง
-    if (sh.getLastRow() < 1) sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
     sh.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#e8eaed').setWrap(true).setVerticalAlignment('middle');
     sh.setFrozenRows(1);
     (widths || []).forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
@@ -82,8 +82,8 @@ function setup() {
   bank.getRange(2, 3, Math.max(1, bank.getLastRow() - 1), 3).setWrap(true);
   bank.getRange(1, 9).setValue('← เพิ่มข้อใหม่ต่อท้ายได้เลย กรอกแค่ 5 คอลัมน์แรก (หมวด/ระดับ/โจทย์/คำตอบ/คำอธิบาย) ถ้าคำตอบไม่ใช่ตัวเลข ให้ใส่ตัวเลือกคั่นด้วย | ในคอลัมน์ F').setFontColor('#5f6368');
   // ผลและข้อมูล
-  head(SH.daily, DAILY_HEAD, [95, 90, 100, 70], ['A']);
-  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360], ['A', 'E', 'F', 'G', 'Q']);
+  head(SH.daily, DAILY_HEAD, [95, 90, 100, 90], ['A', 'AB', 'AC', 'AF', 'AG']);
+  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360, 50], ['A', 'E', 'F', 'G', 'Q']);
   var lv = head(SH.levels, LEVEL_HEAD, [190, 150, 330, 140, 150, 130, 100, 260], ['G']);
   if (!lv.getRange(2, 1).getValue()) {
     SKILLS.forEach(function (sk, i) { lv.getRange(2 + i, 1).setValue(SKILL_NAMES[sk]); });
@@ -91,14 +91,18 @@ function setup() {
     var L0 = { tiers: { word: 2, observe: 2, analytic: 2 }, fails: {}, last: {} };
     SKILLS.forEach(function (sk) { L0[sk] = 1; L0.fails[sk] = 0; });
     writeLevels(L0);
-    lv.getRange(10, 1).setValue('หมายเหตุ: ขั้นเริ่มต้นจะถูกกำหนดอัตโนมัติหลังทำแบบวัดระดับครบ 5 วัน — ผู้ปกครองแก้เลขในคอลัมน์ B เองได้ทุกเมื่อ').setFontColor('#5f6368');
+    lv.getRange(10, 1).setValue('หมายเหตุ: แท็บนี้เก็บผลจากแบบวัดระดับ (ขั้นเริ่มต้นของแต่ละบันไดเดิม) ไว้อ้างอิงและใช้กับแบบวัดผลรายเดือน — การฝึกประจำวันใช้แท็บ "รอบหัวข้อ" แทน ส่วนระดับความยากของโจทย์ปัญหา/สังเกต/วิเคราะห์ปรับในแถวล่างของแท็บนี้').setFontColor('#5f6368');
   }
   head(SH.review, REVIEW_HEAD, [80, 110, 90, 70, 80, 90, 110, 110, 100, 130, 300], ['B', 'G', 'H', 'K']);
-  head(SH.progress, PROGRESS_HEAD, [95, 110, 110, 110, 130, 80, 80, 80, 110], ['A']);
+  head(SH.progress, PROGRESS_HEAD, [95, 110, 110, 110, 130, 80, 80, 80, 80, 90], ['A']);
+  var rot = head(SH.rotation, ROT_HEAD, [210, 170, 170, 360, 110], ['E']);
+  ensureRotationSheet();
+  rot.getRange(1, 1, 1, ROT_HEAD.length).setValues([ROT_HEAD]);
+  rot.getRange(13, 1).setValue('หมายเหตุ: ระบบเลื่อนสถานะให้เองหลังทำเสร็จแต่ละชุด ผู้ปกครองแก้รอบ/ชุดถัดไปได้เมื่อต้องการ (ชุดที่เปิดค้างอยู่ก่อนแก้จะไม่เลื่อนสถานะ)').setFontColor('#5f6368');
   head(SH.bench, BENCH_HEAD, [100, 100, 130, 60, 70, 70, 90], ['A', 'B']);
   getSheet(SH.report);
   // เรียงแท็บ และลบแท็บเปล่าเริ่มต้น
-  [SH.settings, SH.daily, SH.levels, SH.progress, SH.report, SH.bank, SH.review, SH.items, SH.bench].forEach(function (n, i) {
+  [SH.settings, SH.daily, SH.rotation, SH.levels, SH.progress, SH.report, SH.bank, SH.review, SH.items, SH.bench].forEach(function (n, i) {
     var sh = ss().getSheetByName(n); ss().setActiveSheet(sh); ss().moveActiveSheet(i + 1);
   });
   ['ชีต1', 'Sheet1'].forEach(function (n) {
@@ -137,6 +141,8 @@ function clearTestData() {
   SKILLS.forEach(function (sk) { L0[sk] = 1; L0.fails[sk] = 0; });
   writeLevels(L0);
   props().deleteProperty('STATE');
+  var rsh = ss().getSheetByName(SH.rotation);
+  if (rsh) { rsh.clear(); ensureRotationSheet(); }
   props().getKeys().forEach(function (k) { if (k.indexOf('DRAFT_') === 0) props().deleteProperty(k); });
   rebuildReportSheet();
   return 'ล้างข้อมูลแล้ว';
