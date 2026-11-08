@@ -153,7 +153,7 @@ function dashAlerts(x) {
   if ((x.dueReviews || 0) >= 8) out.push({ level: 'info', text: 'มีข้อทบทวนครบกำหนด ' + x.dueReviews + ' ข้อ (ระบบทยอยใส่ในชุดวันละไม่เกิน 8 ข้อ)' });
   (x.lowBank || []).forEach(function (b) { out.push({ level: 'warn', text: 'คลังข้อสอบหมวด "' + b.cat + '" เหลือข้อสด ' + b.fresh + ' ข้อ ควรเพิ่มข้อใหม่' }); });
   if (x.streak >= 5) out.push({ level: 'good', text: 'ทำติดต่อกัน ' + x.streak + ' วันแล้ว เยี่ยมมาก!' });
-  if (x.todayDone) out.push({ level: 'good', text: 'วันนี้ลูกทำเสร็จแล้ว' + (String(x.todayPass || '').indexOf('ผ่าน') === 0 ? ' และผ่านขั้นของส่วน A' : '') });
+  if (x.todayDone) out.push({ level: 'good', text: 'วันนี้ลูกทำเสร็จแล้ว' + (String(x.todayPass || '').indexOf('ผ่าน') === 0 ? ' และผ่านการประเมินสัปดาห์' : '') });
   return out;
 }
 

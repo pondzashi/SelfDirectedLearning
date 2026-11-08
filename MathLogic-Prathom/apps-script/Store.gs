@@ -281,7 +281,9 @@ function ensureRotationSheet() {
   if (sh.getLastRow() < 1) {
     sh.getRange('E:E').setNumberFormat('@');
     sh.getRange(1, 1, 1, ROT_HEAD.length).setValues([ROT_HEAD]);
-    sh.getRange(2, 1, TOPICS.length, 5).setValues(TOPICS.map(function (t) { return [TOPIC_NAMES[t], 1, 0, '', '']; }));
+    var seed = rotRounds0();
+    try { if (getState().placementDone) seed = placementRounds(readLevels()); } catch (e) { seed = rotRounds0(); }  // อัปเกรดจากเวอร์ชันเดิม: ใช้ผลวัดระดับที่มีอยู่แล้ว
+    sh.getRange(2, 1, TOPICS.length, 5).setValues(TOPICS.map(function (t) { return [TOPIC_NAMES[t], seed[t], 0, '', '']; }));
     sh.getRange(8, 1, 4, 2).setValues([['หัวข้อสัปดาห์นี้', TOPIC_NAMES.add], ['ชุดถัดไป (1-6)', 1], ['สัปดาห์นี้เป็นการทำซ้ำ (ใช่ / ไม่ใช่)', 'ไม่ใช่'], ['สัปดาห์ที่ (นับรวมทุกหัวข้อ)', 1]]);
   }
   return sh;

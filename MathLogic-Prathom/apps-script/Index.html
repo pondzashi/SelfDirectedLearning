@@ -513,7 +513,7 @@
       if (res.pages && res.pages.length) timeInfo += '<div class="card"><b>เวลาแต่ละหน้า</b><br>' + res.pages.map(function (pg) { return 'หน้า ' + pg.page + ': ' + mmss(pg.sec) + ' (ถูก ' + pg.right + '/' + pg.n + ')'; }).join(' · ') + '</div>';
     } else timeInfo = '<p class="lead">ใช้เวลา ' + mmss(res.totalSec) + ' นาที</p>';
     RUN.done.push(res); RUN.sec = null; SEC = null; save();
-    gs('submitSection', { date: SET.date, mode: SET.mode, section: res }).catch(function () {});
+    gs('submitSection', { date: SET.date, slot: SET.slot === 2 ? 2 : 1, mode: SET.mode, section: res }).catch(function () {});
     var last = RUN.done.length >= SET.sections.length;
     show('<div class="center"><div class="stars">' + stars + '</div><h1>จบส่วน ' + esc(res.id) + ' แล้ว!</h1><p class="lead">ถูกรอบแรก <b>' + right + '/' + n + '</b>' + (res.rounds ? ' · แก้ ' + res.rounds + ' รอบ' : ' · ไม่ต้องแก้เลย') + '</p>' + timeInfo + '<p class="lead">' + msg + '</p><button class="btn" id="go">' + (last ? 'ส่งผลและดูสรุป' : 'ส่วนต่อไป →') + '</button></div>');
     document.getElementById('go').onclick = nextSection;

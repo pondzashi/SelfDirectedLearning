@@ -359,6 +359,16 @@ const dsh2 = book.getSheetByName('ผลรายวัน');
 const legacy = Array(28).fill(''); legacy[0] = '2026-10-26'; legacy[1] = 'ประจำวัน'; legacy[2] = 'บวกลบ'; legacy[3] = 'ขั้น 3'; legacy[4] = 20; legacy[5] = 25; legacy[7] = 300; legacy[8] = 360; legacy[11] = 'ผ่าน'; legacy[26] = 20; legacy[27] = 'เก่า';
 dsh2.appendRow(legacy);
 ok(G('findDailyRows')('2026-10-26').length === 1 && G('slotOfRow')(G('findDailyRows')('2026-10-26')[0]) === 1, 'แถวเก่า 28 คอลัมน์ = ชุดที่ 1');
+// 6.5) อัปเกรดจากเวอร์ชันเดิม: วัดระดับเสร็จแล้ว ยังไม่มีแท็บ รอบหัวข้อ → ใช้ผลวัดระดับตั้งรอบเริ่มต้น (ไม่รีเซ็ตเป็นรอบ 1)
+{
+  const keep = G('readRotation')();
+  const LV = G('readLevels')(); const saved = JSON.stringify(LV);
+  LV.addsub = 6; LV.mul = 4; LV.div = 3; LV.fracdec = 5; G('writeLevels')(LV);
+  book.deleteSheet(book.getSheetByName('รอบหัวข้อ'));
+  const up = G('readRotation')();
+  ok(up.rounds.add === 2 && up.rounds.sub === 2 && up.rounds.mul === 2 && up.rounds.div === 1 && up.rounds.frac === 1 && up.rot.topic === 'add' && up.rot.setNo === 1, 'อัปเกรด: แท็บรอบหัวข้อใหม่ใช้ผลวัดระดับเดิม ' + JSON.stringify(up.rounds));
+  G('writeRotation')(keep.rot, keep.rounds, null); // คืนสถานะสำหรับขั้นถัดไป
+}
 // 7) Dashboard กับข้อมูล 2 แถวต่อวัน
 CLOCK.today = '2026-11-30';
 G('setSetting')('PARENT_PIN', '4321'); for (const k of Object.keys(cacheStore)) delete cacheStore[k];
@@ -372,6 +382,7 @@ const c5 = b2.calendar.find(c => c.date === '2026-11-05');
 ok(c5 && (c5.status === 'pass' || c5.status === 'done'), 'Dashboard: วันที่มี 2 ชุดแสดงสถานะวันเดียว');
 const dses = G('dash_getSession')('4321', '2026-11-05');
 ok(dses.sets.length === 2 && dses.sets.every(x => x.pageCount === 10), 'Dashboard: รายละเอียดวัน 2 ชุด + เวลาแต่ละหน้า');
+if (process.env.DASH_OUT2) { b2.__ses = dses; fs.writeFileSync(process.env.DASH_OUT2, JSON.stringify(b2)); }
 ok(b2.kpi.sessions === G('readDailyRows')(500).length, 'Dashboard: นับชุดทั้งหมดตรงกับแถวผลรายวัน');
 
 console.log('\nสรุป: ตรวจ ' + checks + ' รายการ ผิด ' + fails);

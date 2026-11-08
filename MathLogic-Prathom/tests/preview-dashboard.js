@@ -17,7 +17,7 @@ window.google = { script: { run: (function () {
       if (name === 'dash_check') ok(pin === '4321' ? { ok: true } : (pin ? { ok: false, reason: 'wrong', left: 3 } : { ok: false, reason: 'need' }));
       else if (pin !== '4321') fail({ message: 'ไม่มีสิทธิ์เข้าถึง' });
       else if (name === 'dash_getBundle') ok(B);
-      else if (name === 'dash_getSession') ok({ date: pin === arg ? '' : arg, total: 31, wrong: [
+      else if (name === 'dash_getSession') ok(B.__ses ? Object.assign({ wrong: [] }, B.__ses) : { date: pin === arg ? '' : arg, total: 31, wrong: [
         { section: 'คิดเลขเร็ว', cat: 'คูณ', label: 'คูณ ขั้น 4 · 2 หลัก × 1 หลัก มีทด', q: '47 × 6 =', errType: 'ทดผิด/ลืมทด', tries: 2, revealed: false, review: false },
         { section: 'การสังเกต', cat: 'การสังเกต', label: 'การสังเกต · แบบ O13', q: 'น้องต้นคิดบวก 478 + 365 ไว้ดังนี้ ...', errType: 'สังเกตไม่ครบ', tries: 3, revealed: true, review: true }] });
     }, 80); };
