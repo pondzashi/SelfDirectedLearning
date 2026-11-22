@@ -2345,7 +2345,7 @@ function dashDailyList(rows) {
     var A = sec(r, 4), B = sec(r, 12), C = sec(r, 19), daily = r[1] === 'ประจำวัน';
     var pages = String(r[33] || '').split(',').filter(function (x) { return x !== ''; }).map(Number);
     var ex = String(r[37] || '').split('/');
-    return { extraRight: ex.length === 2 ? Number(ex[0]) : null, extraTotal: ex.length === 2 ? Number(ex[1]) : null, date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
+    return { extraRight: ex.length === 2 ? Number(ex[0]) : null, extraTotal: ex.length === 2 ? Number(ex[1]) : null, extraSec: Number(r[38]) || 0, extraRounds: Number(r[39]) || 0, date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
       slot: Number(r[28]) === 2 ? 2 : 1, topic: String(r[29] || ''), round: Number(r[30]) || 0, setNo: Number(r[31]) || 0, outcome: String(r[32] || ''), pagesSec: pages,
       x: Number(r[34]) || 0, y: Number(r[35]) || 0, repeat: String(r[36] || '') === 'ซ้ำ',
       totalMin: Number(r[26]) || 0, note: String(r[27] || ''), aPct: dashPct(A.right, A.total), bPct: dashPct(B.right, B.total), cPct: dashPct(C.right, C.total),
@@ -2407,7 +2407,7 @@ function dashTagLabel(key) {
 function dashErrorStats(itemRows, fromYmd) {
   var types = {}, cats = {}, tags = {}, wrongTotal = 0, total = 0;
   itemRows.forEach(function (r) {
-    if (String(r[0]) < fromYmd || String(r[18]) === '1') return;   // ข้อฝึกเพิ่มไม่รวมในสถิติข้อผิดพลาด
+    if (String(r[0]) < fromYmd || Number(r[18]) > 0) return;   // ข้อฝึกเพิ่มไม่รวมในสถิติข้อผิดพลาด
     var cat = String(r[3]), key = String(r[4]), ok = Number(r[7]) === 1;
     total++;
     var c = cats[cat] = cats[cat] || { cat: cat, total: 0, wrong: 0 }; c.total++;
@@ -2519,6 +2519,7 @@ var DEFAULT_SETTINGS = [
   ['MAX_REPEATS', 3, 'ถ้าทำขั้นเดิมไม่ผ่านติดกันกี่ครั้ง ให้สลับไปฝึกทักษะอื่นก่อน (และแจ้งผู้ปกครอง)'],
   ['PLACEMENT_BACKOFF', 1, 'หลังวัดระดับ ถอยกลับกี่ขั้นเพื่อเริ่มจากระดับที่คล่อง'],
   ['DELTA_THRESHOLD', 3, 'เปลี่ยนแปลงไม่เกินกี่ % ถือว่า "เท่าเดิม" (สีเทา) ในรายงานรายเดือน'],
+  ['EXTRA_MAX_ROUNDS', 1, 'ฝึกเพิ่มเมื่อทำผิด (ส่วน A): วนได้กี่รอบ 1 = ผิดในชุดหลักแล้วฝึกเพิ่มรอบเดียว (ค่าเริ่มต้น) · 2 = ถ้าผิดในข้อฝึกเพิ่มรอบแรก ให้ฝึกเพิ่มอีกรอบ (ข้อละ 5 ข้อ) ฯลฯ สูงสุด 5 · ไม่จับเวลาและไม่มีผลกับผ่าน/ไม่ผ่าน'],
   ['ASSESS_Y_FACTOR', 1.5, 'ชุดที่ 6 (ประเมินผลประจำสัปดาห์): เวลาสูงสุด Y = เวลาเป้าหมาย X × ค่านี้ — ใช้เวลา ≤ X = ผ่าน, ระหว่าง X–Y = ผ่านแต่ติดธงในอีเมล, ≥ Y หรือไม่ถึง 100% หลังแก้ = ทำหัวข้อเดิมซ้ำ 1 สัปดาห์'],
   ['TARGET_MULTIPLIER', 1, 'ปรับเวลาเป้าหมายของส่วน A ในชุดประจำวัน: 1 = ตามที่ตั้งไว้, 1.2 = ให้เวลามากขึ้น 20%, 0.9 = เข้มขึ้น 10% (ไม่มีผลกับแบบวัดระดับ/แบบวัดผล)'],
   ['PARENT_PIN', '', 'รหัสเข้า Dashboard ผู้ปกครอง (ตัวเลขหรือตัวอักษรก็ได้ ตั้งเอง) — ถ้าเว้นว่าง Dashboard จะเข้าไม่ได้ ลิงก์: ลิงก์เว็บแอป + ?page=dashboard'],
@@ -2558,9 +2559,10 @@ function getSettings() {
     });
   }
   cfg.START_DATE = cellToYmd(cfg.START_DATE);
-  ['ASSESS_Y_FACTOR', 'DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
+  ['EXTRA_MAX_ROUNDS', 'ASSESS_Y_FACTOR', 'DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
   if (!(cfg.TARGET_MULTIPLIER > 0)) cfg.TARGET_MULTIPLIER = 1;
   if (!(cfg.ASSESS_Y_FACTOR > 1)) cfg.ASSESS_Y_FACTOR = 1.5;
+  cfg.EXTRA_MAX_ROUNDS = Math.max(1, Math.min(5, Math.floor(cfg.EXTRA_MAX_ROUNDS) || 1));
   if (!(cfg.DASH_GREEN > 0)) cfg.DASH_GREEN = 85;
   if (!(cfg.DASH_YELLOW > 0)) cfg.DASH_YELLOW = 60;
   cfg.PARENT_PIN = cfg.PARENT_PIN == null ? '' : String(cfg.PARENT_PIN);
@@ -2662,7 +2664,7 @@ function touchBankUsed(codes, date) {
 }
 
 /* ---------------- ประวัติข้อ (กันโจทย์ซ้ำ + สถิติ) ---------------- */
-var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)', 'หน้า', 'ฝึกเพิ่ม'];
+var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)', 'หน้า', 'ฝึกเพิ่ม (รอบที่)'];
 function readItemRows(maxRows) {
   var sh = getSheet(SH.items), last = sh.getLastRow();
   if (last < 2) return [];
@@ -2684,7 +2686,7 @@ function historyContext(today) {
   var rows = readItemRowsSince(ymdAdd(today, -Math.max(60, (getSettings().BANK_RECENT_DAYS || 45) + 7))), ctx = { usedSigs: {}, recentTpl: {}, bankUsed: {} };
   rows.forEach(function (r) {
     var d = r[0], key = String(r[4]), diff = ymdDiff(today, d);
-    if (String(r[18]) === '1') return;   // ข้อฝึกเพิ่มไม่นับเป็นโจทย์ที่เคยออก
+    if (Number(r[18]) > 0) return;   // ข้อฝึกเพิ่ม (คอลัมน์ = รอบที่) ไม่นับเป็นโจทย์ที่เคยออก
     if (diff <= 30 && diff >= 0) ctx.usedSigs[String(r[6])] = 1;
     if (diff <= 3 && diff >= 0 && key.indexOf('TPL:') === 0) ctx.recentTpl[key.slice(4)] = 1;
     if (key.indexOf('FIX:') === 0) { var c = key.slice(4); if (!ctx.bankUsed[c] || ctx.bankUsed[c] < d) ctx.bankUsed[c] = d; }
@@ -2738,9 +2740,9 @@ function countPendingReviews() {
 /* ---------------- ผลรายวัน ---------------- */
 function sectionCols(p) { return [p + ' คะแนนรอบแรก', p + ' เต็ม', p + ' เวลารอบแรก (วิ)', p + ' เวลารวมรวมแก้ (วิ)', p + ' เวลาเป้าหมาย/แนะนำ (วิ)', p + ' รอบแก้', p + ' ข้อผิดพลาด']; }
 var DAILY_HEAD = ['วันที่', 'ประเภท', 'A ทักษะ', 'A ขั้น'].concat(sectionCols('A'), ['A ผ่าน?'], sectionCols('B'), sectionCols('C'), ['เวลารวม (นาที)', 'สรุป'],
-  ['ชุดในวัน (1=ปกติ 2=ชดเชย)', 'หัวข้อ', 'รอบ', 'ชุดที่ (1-6)', 'ผลประเมินสัปดาห์', 'เวลาแต่ละหน้า A (วินาที)', 'เป้าหมาย X (วินาที)', 'เกณฑ์สูงสุด Y (วินาที)', 'ทำซ้ำสัปดาห์นี้?', 'ฝึกเพิ่ม (ถูก/ทั้งหมด)']);
+  ['ชุดในวัน (1=ปกติ 2=ชดเชย)', 'หัวข้อ', 'รอบ', 'ชุดที่ (1-6)', 'ผลประเมินสัปดาห์', 'เวลาแต่ละหน้า A (วินาที)', 'เป้าหมาย X (วินาที)', 'เกณฑ์สูงสุด Y (วินาที)', 'ทำซ้ำสัปดาห์นี้?', 'ฝึกเพิ่ม (ถูก/ทั้งหมด)', 'เวลารวมฝึกเพิ่ม (วินาที)', 'รอบฝึกเพิ่ม']);
 /** ตำแหน่งคอลัมน์ที่เพิ่มต่อท้ายใน "ผลรายวัน" */
-var DC = { slot: 28, topic: 29, round: 30, setNo: 31, outcome: 32, pages: 33, x: 34, y: 35, repeat: 36, extra: 37 };
+var DC = { slot: 28, topic: 29, round: 30, setNo: 31, outcome: 32, pages: 33, x: 34, y: 35, repeat: 36, extra: 37, extraSec: 38, extraRounds: 39 };
 function slotOfRow(r) { return Number(r[DC.slot]) === 2 ? 2 : 1; }
 function readDailyRows(maxRows) {
   var sh = getSheet(SH.daily), last = sh.getLastRow();
@@ -2879,6 +2881,7 @@ function getTodaySet(req) {
     var a = set.sections[0];
     set.status = 'ready'; set.date = today; set.slot = slot; set.catchup = wantCatch; set.child = childLabel(); set.childName = st.childName || '';
     set.aMaxSec = Math.max(cfg.A_MAX_SEC, (a.ySec || 0) + 300);
+    set.extraMaxRounds = cfg.EXTRA_MAX_ROUNDS;
     if (wantCatch) set.title = 'ชุดชดเชย (ไม่บังคับ) — ' + set.title;
     return set;
   } catch (e) {
@@ -2921,7 +2924,7 @@ function itemRowsFor(date, mode, sections) {
     (sec.items || []).forEach(function (it) {
       rows.push([date, mode, sec.id, it.cat, it.key, it.tag || '', it.sig || '', it.ok1 ? 1 : 0, it.tries || 1, it.revealed ? 1 : 0, round1s(it.sec || 0),
         it.ok1 ? '' : (it.errType || 'ตอบผิด'), it.review ? 1 : 0, it.cmp ? 1 : 0, it.tier || '', it.ladder == null ? '' : it.ladder,
-        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '', it.extra ? 1 : '']);
+        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '', it.extra ? (Number(it.xround) || 1) : '']);
     });
   });
   return rows;
@@ -2999,7 +3002,7 @@ function doSubmit(res) {
     info = { topic: aTopic, topicName: TOPIC_NAMES[aTopic], round: aRound, setNo: aSet, assessment: assess, x: x, y: y, stale: !matches, repeat: !!A.repeat,
       label: rotLabel(aTopic, aRound, aSet, !!A.repeat), totalSec: Math.round((A.firstSec || 0) + (A.correctionSec || 0)),
       pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }),
-      extraN: extraItems.length, extraRight: extraItems.filter(function (i) { return i.ok1; }).length, wrongFirst: (A.items || []).filter(function (i) { return !i.ok1 && !i.review; }).length };
+      extraSec: Math.round(Number(A.extraSec) || 0), extraRounds: Number(A.extraRounds) || 0, extraN: extraItems.length, extraRight: extraItems.filter(function (i) { return i.ok1; }).length, wrongFirst: (A.items || []).filter(function (i) { return !i.ok1 && !i.review; }).length };
     if (assess) {
       var o = assessOutcome({ mastered: aMain.every(function (i) { return !i.revealed; }), totalSec: info.totalSec }, x, y);
       info.outcome = o.outcome; info.reason = o.reason;
@@ -3052,7 +3055,7 @@ function doSubmit(res) {
   var modeLabel = mode === 'daily' ? 'ประจำวัน' : mode === 'placement' ? 'วัดระดับ' : 'วัดผลรายเดือน';
   var passCell = info ? (info.assessment ? outcomeCell(info.outcome) : '-') : '-';
   var dsh = getSheet(SH.daily), row = [date, modeLabel, topicName, stepLabel].concat(sectionRowCells(sA), [passCell], sectionRowCells(sB), sectionRowCells(sC), [totalMin, summary.note],
-    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat, extraItems.length ? extraItems.filter(function (i) { return i.ok1; }).length + '/' + extraItems.length : '']);
+    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat, extraItems.length ? extraItems.filter(function (i) { return i.ok1; }).length + '/' + extraItems.length : '', extraItems.length ? Math.round(Number(A.extraSec) || 0) : '', extraItems.length ? (Number(A.extraRounds) || 1) : '']);
   dsh.getRange(dsh.getLastRow() + 1, 1, 1, DAILY_HEAD.length).setValues([row]);
 
   // 5) ความก้าวหน้า + แผนภูมิ
@@ -3250,7 +3253,7 @@ function sendSessionEmail(sm) {
     var hd = d.assessment ? 'ประเมินสัปดาห์' + d.topicName + ': ' + (d.outcome === 'pass' ? '🎉 ผ่าน' : d.outcome === 'flag' ? '⚑ ผ่านแต่ช้า (ติดธง)' : '↻ ต้องทำหัวข้อนี้ซ้ำ') : 'ส่วน A · ' + d.label;
     h += '<p style="margin:12px 0;padding:10px;border-radius:8px;background:' + bg + ';"><b>' + esc(hd) + '</b><br>เวลารวมส่วน A (รวมเวลาแก้) ' + mmss(d.totalSec) +
       (d.assessment ? ' · เป้า X ' + mmss(d.x) + ' · เกณฑ์สูงสุด Y ' + mmss(d.y) : ' · เป้าอ้างอิง ' + mmss(d.x)) + (d.reason ? '<br>' + esc(d.reason) : '') +
-      (d.pages && d.pages.length ? '<br><span style="font-size:13px;color:#5f6368;">เวลาแต่ละหน้า (วินาที): ' + d.pages.join(', ') + '</span>' : '') + (d.extraN ? '<br><b>ฝึกเพิ่ม (ไม่จับเวลา):</b> ผิดรอบแรก ' + d.wrongFirst + ' ข้อ → ทำเพิ่ม ' + d.extraN + ' ข้อ ถูกตั้งแต่ครั้งแรก ' + d.extraRight + '/' + d.extraN : '') + (d.stale ? '<br><i>ชุดนี้ไม่ตรงสถานะปัจจุบัน จึงไม่เลื่อนสถานะ</i>' : '') + '</p>';
+      (d.pages && d.pages.length ? '<br><span style="font-size:13px;color:#5f6368;">เวลาแต่ละหน้า (วินาที): ' + d.pages.join(', ') + '</span>' : '') + (d.extraN ? '<br><b>ฝึกเพิ่ม (ไม่จับเวลาเทียบเป้า):</b> ผิดรอบแรก ' + d.wrongFirst + ' ข้อ → ทำเพิ่ม ' + d.extraN + ' ข้อ (' + (d.extraRounds || 1) + ' รอบ) ถูกตั้งแต่ครั้งแรก ' + d.extraRight + '/' + d.extraN + ' · ใช้เวลารวม ' + fmtSec(d.extraSec || 0) : '') + (d.stale ? '<br><i>ชุดนี้ไม่ตรงสถานะปัจจุบัน จึงไม่เลื่อนสถานะ</i>' : '') + '</p>';
   }
   h += '<table style="border-collapse:collapse;width:100%;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>ส่วน</th><th ' + tdS() + '>ถูกรอบแรก</th><th ' + tdS() + '>เวลา</th><th ' + tdS() + '>รอบแก้</th><th ' + tdS() + '>ข้อผิดพลาด</th></tr>' + rows + '</table>';
   h += '<p>' + esc(sm.note || '') + '</p>';
@@ -3425,7 +3428,7 @@ function dash_getSession(pin, date) {
   dash_need_(pin);
   date = String(date || '');
   var rows = readItemRowsSince(date).filter(function (r) { return String(r[0]) === date; });
-  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length, extraRight: d.extraRight, extraTotal: d.extraTotal }; });
+  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length, extraRight: d.extraRight, extraTotal: d.extraTotal, extraSec: d.extraSec, extraRounds: d.extraRounds }; });
   var secName = { A: 'คิดเลขเร็ว', B: 'การสังเกต', C: 'คิดวิเคราะห์' };
   return {
     date: date, total: rows.length, sets: sets,

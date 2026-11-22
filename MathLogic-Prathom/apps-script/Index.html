@@ -267,6 +267,7 @@
     if (SEC.stage === 'intro') return sectionIntro();
     if (SEC.stage === 'fixintro') return fixIntro();
     if (SEC.stage === 'extraintro') return extraIntro();
+    if (SEC.stage === 'extra') SEC.xStart = Date.now();   // กลับมาทำต่อ: เริ่มนับเวลาฝึกเพิ่มใหม่ (ไม่นับช่วงที่ปิดหน้าจอ)
     if (SEC.stage === 'observe') { SEC.obsStart = Date.now(); return observeScreen(SEC.obsPage); }
     renderItem();
   }
@@ -504,16 +505,16 @@
         var right = 0; for (var q = o.pg.start; q < o.pg.start + o.pg.n; q++) if (SEC.res[q].ok1) right++;
         return { page: j + 1, sec: Math.round((SEC.pgSecs[o.k] || 0) * 10) / 10, right: right, n: o.pg.n, warm: !!o.pg.warm };
       });
-      out.extraItems = SEC.extraItems || [];
+      out.extraItems = SEC.extraItems || []; out.extraSec = Math.round(SEC.extraSec || 0); out.extraRounds = SEC.extraRounds || 0;
     }
     return out;
   }
   /* ---------------- ฝึกเพิ่มเมื่อทำผิด (เฉพาะส่วน A ชุดประจำวัน): ผิด 1 ข้อ → เพิ่ม 5 ข้อแบบเดียวกัน ไม่จับเวลา ไม่มีเพดาน ---------------- */
   var EXTRA_PER_WRONG = 5;
   function shuffled(a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
-  function buildExtraList(s) {
-    var cnt = {}, out = [];
-    s.items.forEach(function (it, i) { if (!SEC.res[i].ok1 && it.key && s.extraBank && s.extraBank[it.key]) cnt[it.key] = (cnt[it.key] || 0) + 1; });
+  function buildExtraList(s, srcItems) {
+    var cnt = {}, out = [], src = srcItems || s.items;
+    src.forEach(function (it, i) { var r = srcItems ? it : SEC.res[i]; if (!r.ok1 && it.key && s.extraBank && s.extraBank[it.key]) cnt[it.key] = (cnt[it.key] || 0) + 1; });
     Object.keys(cnt).forEach(function (k) {
       var bank = shuffled(s.extraBank[k]), need = cnt[k] * EXTRA_PER_WRONG;
       for (var i = 0; i < need && bank.length; i++) { var c = JSON.parse(JSON.stringify(bank[i % bank.length])); c.extra = true; out.push(c); }
@@ -522,8 +523,8 @@
   }
   function extraIntro() {
     var n = SEC.xs.items.length;
-    show('<div class="center"><div class="big-emoji">🔁</div><h1>ฝึกเพิ่มให้แม่นขึ้น</h1><p class="lead">รอบแรกผิด <b>' + SEC.xsWrong + '</b> ข้อ ระบบเลยให้ทำเพิ่ม <b>' + n + '</b> ข้อ แบบเดียวกับที่ผิด (ตัวเลขใหม่)<br>ไม่จับเวลา ค่อย ๆ คิดให้ถูก ถ้าตอบผิดครั้งที่ 2 จะแสดงวิธีคิดให้ดู</p><button class="btn" id="go">เริ่มฝึกเพิ่ม</button></div>');
-    document.getElementById('go').onclick = function () { SEC.stage = 'extra'; SEC.pos = 0; save(); renderItem(); };
+    show('<div class="center"><div class="big-emoji">🔁</div><h1>ฝึกเพิ่มให้แม่นขึ้น' + (SEC.xRound > 1 ? ' (รอบที่ ' + SEC.xRound + ')' : '') + '</h1><p class="lead">' + (SEC.xRound > 1 ? 'ในรอบที่แล้วยังผิดตั้งแต่ครั้งแรก' : 'รอบแรกผิด') + ' <b>' + SEC.xsWrong + '</b> ข้อ ระบบเลยให้ทำเพิ่ม <b>' + n + '</b> ข้อ แบบเดียวกับที่ผิด (ตัวเลขใหม่)<br>ไม่จับเวลา ค่อย ๆ คิดให้ถูก ถ้าตอบผิดครั้งที่ 2 จะแสดงวิธีคิดให้ดู</p><button class="btn" id="go">เริ่มฝึกเพิ่ม</button></div>');
+    document.getElementById('go').onclick = function () { SEC.stage = 'extra'; SEC.pos = 0; SEC.xStart = Date.now(); save(); renderItem(); };
   }
   function ansText(it) { return it.type === 'choice' ? esc(it.choices[+it.ans - 1]) : it.type === 'divrem' ? it.ans.split('|')[0] + ' เศษ ' + it.ans.split('|')[1] : rich(it.type === 'frac' ? '{' + it.ans + '}' : it.ans); }
   function submitExtra(it, r, ok, sec, val, box, fb) {
@@ -542,10 +543,24 @@
   }
   function endExtra() {
     stopTimer();
-    SEC.extraItems = SEC.xs.items.map(function (it, i) {
+    SEC.xSecAcc = (SEC.xSecAcc || 0) + (SEC.xStart ? (Date.now() - SEC.xStart) / 1000 : 0); SEC.xStart = 0;
+    var done = SEC.xs.items.map(function (it, i) {
       var r = SEC.res[i];
-      return { key: it.key, cat: it.cat, tag: it.tag, q: it.q, ok1: r.ok1, tries: r.tries || 1, revealed: r.revealed, sec: r.sec, errType: r.errType, tier: it.tier || 0, extra: true };
+      return { key: it.key, cat: it.cat, tag: it.tag, q: it.q, ok1: r.ok1, tries: r.tries || 1, revealed: r.revealed, sec: r.sec, errType: r.errType, tier: it.tier || 0, extra: true, xround: SEC.xRound };
     });
+    SEC.xAll = (SEC.xAll || []).concat(done);
+    // ผิดตั้งแต่ครั้งแรกในรอบนี้ และยังไม่ครบจำนวนรอบที่ตั้งไว้ (EXTRA_MAX_ROUNDS) → ฝึกเพิ่มรอบต่อไป
+    var s = SET.sections[SEC.i];
+    if (SEC.xRound < (SET.extraMaxRounds || 1)) {
+      var nx = buildExtraList(s, done);
+      if (nx.items.length) {
+        SEC.xRound++; SEC.xsWrong = nx.wrong; SEC.xs.items = nx.items; SEC.xs.mainCount = nx.items.length;
+        SEC.res = nx.items.map(function () { return { ok1: false, tries: 0, revealed: false, sec: 0, errType: '', done: false }; });
+        SEC.stage = 'extraintro'; SEC.pos = 0; save();
+        return extraIntro();
+      }
+    }
+    SEC.extraItems = SEC.xAll; SEC.extraSec = SEC.xSecAcc; SEC.extraRounds = SEC.xRound;
     SEC.res = SEC.mainRes; SEC.stage = 'done'; save();
     sectionDone2();
   }
@@ -556,7 +571,7 @@
       SEC.extraTried = true;
       var ex = buildExtraList(s);
       if (ex.items.length) {
-        SEC.mainRes = SEC.res; SEC.xsWrong = ex.wrong;
+        SEC.mainRes = SEC.res; SEC.xsWrong = ex.wrong; SEC.xRound = 1; SEC.xAll = []; SEC.xSecAcc = 0; SEC.xStart = 0;
         SEC.xs = { id: 'A', name: 'ฝึกเพิ่ม', kind: 'extra', items: ex.items, mainCount: ex.items.length, targetSec: 0, recSec: 0 };
         SEC.res = ex.items.map(function () { return { ok1: false, tries: 0, revealed: false, sec: 0, errType: '', done: false }; });
         SEC.stage = 'extraintro'; save();
@@ -574,7 +589,7 @@
     if (res.kind === 'drill' && res.targetSec) {
       var within = res.totalSec <= res.targetSec;
       timeInfo = '<p class="lead">เวลารวม <b>' + mmss(res.totalSec) + '</b> / เป้าหมาย ' + mmss(res.targetSec) + (SET.mode === 'daily' ? (within ? ' ✓ ทันเวลา!' : (res.assessment ? ' — ช้ากว่าเป้านิดหน่อย' : '')) : '') + '</p>';
-      if (res.extraItems && res.extraItems.length) timeInfo += '<p class="lead">ฝึกเพิ่ม ' + res.extraItems.length + ' ข้อ ถูกตั้งแต่ครั้งแรก ' + res.extraItems.filter(function (i) { return i.ok1; }).length + '</p>';
+      if (res.extraItems && res.extraItems.length) timeInfo += '<p class="lead">ฝึกเพิ่ม ' + res.extraRounds + ' รอบ ' + res.extraItems.length + ' ข้อ ถูกตั้งแต่ครั้งแรก ' + res.extraItems.filter(function (i) { return i.ok1; }).length + ' · ใช้เวลา ' + mmss(res.extraSec) + '</p>';
       if (res.pages && res.pages.length) timeInfo += '<div class="card"><b>เวลาแต่ละหน้า</b><br>' + res.pages.map(function (pg) { return 'หน้า ' + pg.page + ': ' + mmss(pg.sec) + ' (ถูก ' + pg.right + '/' + pg.n + ')'; }).join(' · ') + '</div>';
     } else timeInfo = '<p class="lead">ใช้เวลา ' + mmss(res.totalSec) + ' นาที</p>';
     RUN.done.push(res); RUN.sec = null; SEC = null; save();

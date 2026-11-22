@@ -65,6 +65,7 @@ function getTodaySet(req) {
     var a = set.sections[0];
     set.status = 'ready'; set.date = today; set.slot = slot; set.catchup = wantCatch; set.child = childLabel(); set.childName = st.childName || '';
     set.aMaxSec = Math.max(cfg.A_MAX_SEC, (a.ySec || 0) + 300);
+    set.extraMaxRounds = cfg.EXTRA_MAX_ROUNDS;
     if (wantCatch) set.title = 'ชุดชดเชย (ไม่บังคับ) — ' + set.title;
     return set;
   } catch (e) {
@@ -107,7 +108,7 @@ function itemRowsFor(date, mode, sections) {
     (sec.items || []).forEach(function (it) {
       rows.push([date, mode, sec.id, it.cat, it.key, it.tag || '', it.sig || '', it.ok1 ? 1 : 0, it.tries || 1, it.revealed ? 1 : 0, round1s(it.sec || 0),
         it.ok1 ? '' : (it.errType || 'ตอบผิด'), it.review ? 1 : 0, it.cmp ? 1 : 0, it.tier || '', it.ladder == null ? '' : it.ladder,
-        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '', it.extra ? 1 : '']);
+        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '', it.extra ? (Number(it.xround) || 1) : '']);
     });
   });
   return rows;
@@ -185,7 +186,7 @@ function doSubmit(res) {
     info = { topic: aTopic, topicName: TOPIC_NAMES[aTopic], round: aRound, setNo: aSet, assessment: assess, x: x, y: y, stale: !matches, repeat: !!A.repeat,
       label: rotLabel(aTopic, aRound, aSet, !!A.repeat), totalSec: Math.round((A.firstSec || 0) + (A.correctionSec || 0)),
       pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }),
-      extraN: extraItems.length, extraRight: extraItems.filter(function (i) { return i.ok1; }).length, wrongFirst: (A.items || []).filter(function (i) { return !i.ok1 && !i.review; }).length };
+      extraSec: Math.round(Number(A.extraSec) || 0), extraRounds: Number(A.extraRounds) || 0, extraN: extraItems.length, extraRight: extraItems.filter(function (i) { return i.ok1; }).length, wrongFirst: (A.items || []).filter(function (i) { return !i.ok1 && !i.review; }).length };
     if (assess) {
       var o = assessOutcome({ mastered: aMain.every(function (i) { return !i.revealed; }), totalSec: info.totalSec }, x, y);
       info.outcome = o.outcome; info.reason = o.reason;
@@ -238,7 +239,7 @@ function doSubmit(res) {
   var modeLabel = mode === 'daily' ? 'ประจำวัน' : mode === 'placement' ? 'วัดระดับ' : 'วัดผลรายเดือน';
   var passCell = info ? (info.assessment ? outcomeCell(info.outcome) : '-') : '-';
   var dsh = getSheet(SH.daily), row = [date, modeLabel, topicName, stepLabel].concat(sectionRowCells(sA), [passCell], sectionRowCells(sB), sectionRowCells(sC), [totalMin, summary.note],
-    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat, extraItems.length ? extraItems.filter(function (i) { return i.ok1; }).length + '/' + extraItems.length : '']);
+    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat, extraItems.length ? extraItems.filter(function (i) { return i.ok1; }).length + '/' + extraItems.length : '', extraItems.length ? Math.round(Number(A.extraSec) || 0) : '', extraItems.length ? (Number(A.extraRounds) || 1) : '']);
   dsh.getRange(dsh.getLastRow() + 1, 1, 1, DAILY_HEAD.length).setValues([row]);
 
   // 5) ความก้าวหน้า + แผนภูมิ

@@ -112,7 +112,7 @@ function botResult(set, speed) {
     const out = { id: sec.id, name: sec.name, kind: sec.kind, skill: sec.skill || '', items, firstSec, correctionSec: corr, totalSec: firstSec + corr, rounds: wrong ? maxTries - 1 : 0, targetSec: sec.targetSec || 0, recSec: sec.recSec || 0, mainCount: sec.mainCount || items.length };
     if (sec.id === 'A' && sec.topic && sec.extraBank) { // เด็กจำลองทำ "ฝึกเพิ่ม": ผิดรอบแรก 1 ข้อ → 5 ข้อ จากคลังข้อสำรอง
       const cnt = {}; items.forEach(i => { if (!i.ok1 && sec.extraBank[i.key]) cnt[i.key] = (cnt[i.key] || 0) + 1; });
-      out.extraItems = []; out.wrongKeyed = Object.values(cnt).reduce((a, b) => a + b, 0);
+      out.extraSec = 75; out.extraRounds = 1; out.extraItems = []; out.wrongKeyed = Object.values(cnt).reduce((a, b) => a + b, 0);
       Object.keys(cnt).forEach(k => { for (let i = 0; i < cnt[k] * 5; i++) { const b = sec.extraBank[k][i % sec.extraBank[k].length], ok1 = botRng() < 0.85;
         out.extraItems.push({ key: b.key, cat: b.cat, tag: b.tag, q: b.q, ok1, tries: ok1 ? 1 : 2, revealed: !ok1 && botRng() < 0.5, sec: 6, errType: ok1 ? '' : 'คำนวณพลาด', tier: b.tier || 0, extra: true }); } });
     }
@@ -334,7 +334,11 @@ ok(a.set.meta.topic === 'add' && a.set.meta.setNo === 1 && a.r.ok && a.set.slot 
   ok(rows1.length === (A1.extraItems || []).length, 'ข้อฝึกเพิ่มบันทึกในผลรายข้อ (คอลัมน์ ฝึกเพิ่ม=1) ' + rows1.length);
   const dr = G('findDailyRows')('2026-11-02')[0];
   ok(A1.wrongKeyed === 0 ? dr[37] === '' : new RegExp('^\\d+/' + A1.extraItems.length + '$').test(String(dr[37])), 'ผลรายวันบันทึก ฝึกเพิ่ม ถูก/ทั้งหมด: ' + dr[37]);
-  ok(A1.wrongKeyed === 0 || /ฝึกเพิ่ม \(ไม่จับเวลา\)/.test(a.mail.htmlBody), 'อีเมลสรุปแจ้งฝึกเพิ่ม');
+  ok(A1.wrongKeyed === 0 || /ไม่จับเวลาเทียบเป้า/.test(a.mail.htmlBody), 'อีเมลสรุปแจ้งฝึกเพิ่ม');
+  ok(A1.wrongKeyed === 0 ? dr[38] === '' : Number(dr[38]) === 75 && Number(dr[39]) === 1, 'ผลรายวันเก็บเวลารวมฝึกเพิ่ม (75 วินาที) และจำนวนรอบ: ' + dr[38] + ' / ' + dr[39]);
+  ok(A1.wrongKeyed === 0 || /ใช้เวลารวม 1:15/.test(a.mail.htmlBody), 'อีเมลแสดงเวลารวมฝึกเพิ่ม');
+  { const c0 = G('getSettings')().EXTRA_MAX_ROUNDS; G('setSetting')('EXTRA_MAX_ROUNDS', 9); const c9 = G('getSettings')().EXTRA_MAX_ROUNDS; G('setSetting')('EXTRA_MAX_ROUNDS', 0); const cz = G('getSettings')().EXTRA_MAX_ROUNDS; G('setSetting')('EXTRA_MAX_ROUNDS', 1);
+    ok(c0 === 1 && c9 === 5 && cz === 1, 'EXTRA_MAX_ROUNDS: ค่าเริ่มต้น 1 ขอบเขต 1–5 (' + [c0, c9, cz].join() + ')'); }
   ok(G('historyContext')('2026-11-02').usedSigs && !Object.keys(G('historyContext')('2026-11-02').usedSigs).some(k => /^X:/.test(k)), 'ข้อฝึกเพิ่มไม่ปนในประวัติโจทย์ที่เคยออก');
 }
 let again = G('getTodaySet')();
