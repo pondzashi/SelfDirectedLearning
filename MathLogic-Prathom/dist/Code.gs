@@ -1349,6 +1349,26 @@ function obsQ(q, correct, wrongs, explain) {
 function stepItem(id) { var it = genStep(id); delete it.key; return it; }
 var TL = [2, 5, 10, 3, 4, 6, 7, 8, 9, 11, 12];
 
+/* ======================= อุ่นเครื่อง (ข้อเท็จจริงพื้นฐาน สุ่ม ไม่มีแบบรูป) ======================= */
+/** บวก/ลบเลขหลักเดียวข้ามสิบ เช่น 8 + 7, 14 − 9 (ต้นเหตุของข้อผิดในบวก/ลบสองหลัก) */
+PK('warm.addsub', null, 'อุ่นเครื่อง: บวก/ลบข้ามสิบ', [3, 3, 3], {
+  one: function () {
+    var a = ri(2, 9), b = retry(function () { return ri(2, 9); }, function (b) { return a + b > 10; });
+    if (chance(0.5)) return PI(a + ' + ' + b + ' =', a + b, { explain: 'เติม ' + a + ' ให้ครบ 10 ก่อน แล้วบวกส่วนที่เหลือ' });
+    return PI((a + b) + ' − ' + b + ' =', a, { explain: 'ลบให้ถึง 10 ก่อน แล้วลบส่วนที่เหลือ หรือคิดว่า ' + b + ' + ? = ' + (a + b) });
+  }
+});
+/** สูตรคูณและหารผกผัน 2–9 (ใช้กับสัปดาห์คูณ หาร เศษส่วน) */
+PK('warm.muldiv', null, 'อุ่นเครื่อง: สูตรคูณ/หาร', [3, 3, 3], {
+  one: function () {
+    var a = ri(2, 9), b = ri(2, 9);
+    if (chance(0.6)) return PI(a + ' × ' + b + ' =', a * b, { explain: 'สูตรคูณแม่ ' + a });
+    return PI((a * b) + ' ÷ ' + a + ' =', b, { explain: a + ' × ? = ' + (a * b) });
+  }
+});
+var WARM_KIND = { add: 'warm.addsub', sub: 'warm.addsub', mul: 'warm.muldiv', div: 'warm.muldiv', frac: 'warm.muldiv' };
+var WARM_PAGES = 2;   // 20 ข้อ ก่อนชุดที่ 1–5 (ชุดที่ 6 ไม่มี เพื่อให้ผลประเมินเทียบกันได้)
+
 /* ======================= บวก ======================= */
 PK('add.pairs10', 'add', 'บวกให้ครบสิบ', [3, 4, 5], {
   nv: 4,
@@ -1793,7 +1813,21 @@ function setPlan(topic, round, setNo) {
       for (var i = 0; i < e[2]; i++) pages.push({ kind: e[0], lvl: e[1], v: (e[3] || 0) + i });
     });
   }
-  return { total: total, pages: pages.slice(0, np), np: np };
+  pages = pages.slice(0, np);
+  pages.forEach(function (pg, i) { pg.n = i === np - 1 ? total - PAGE_SIZE * (np - 1) : PAGE_SIZE; });
+  // ชุดที่ 1–2 (หน้าแบบรูป): ท้ายชุดมีหน้าสุ่มตรวจ 1 หน้า (ไม่มีแบบรูป) กันการตอบตามแบบรูปอย่างเดียว
+  if (!rp.steps && setNo <= 2) {
+    var ents = rp.sets[setNo - 1], last = ents[ents.length - 1][0];
+    pages.push({ kind: last, lvl: 1, v: 0, n: PAGE_SIZE, check: true });
+    total += PAGE_SIZE; np += 1;
+  }
+  return { total: total, pages: pages, np: np };
+}
+/** หน้าอุ่นเครื่องของชุด (ไม่นับใน X ไม่นับในการประเมิน) */
+function warmPlan(topic, setNo) {
+  if (setNo >= ROT_SETS || !WARM_KIND[topic]) return [];
+  var out = []; for (var i = 0; i < WARM_PAGES; i++) out.push({ kind: WARM_KIND[topic], lvl: 1, v: 0, n: PAGE_SIZE, warm: true });
+  return out;
 }
 function pageKind(id) {
   if (id.indexOf('step:') === 0) return stepKind(id.slice(5));
@@ -1803,7 +1837,7 @@ function pageSpp(kindId, lvl) { var k = pageKind(kindId); return k.spp[Math.min(
 /** เวลาเป้าหมาย X ของชุด (วินาที) = Σ ข้อ × วินาทีต่อข้อ */
 function setXSec(topic, round, setNo) {
   var p = setPlan(topic, round, setNo), s = 0;
-  p.pages.forEach(function (pg, i) { var n = i === p.np - 1 ? p.total - PAGE_SIZE * (p.np - 1) : PAGE_SIZE; s += n * pageSpp(pg.kind, pg.lvl); });
+  p.pages.forEach(function (pg) { s += pg.n * pageSpp(pg.kind, pg.lvl); });
   return Math.round(s);
 }
 
@@ -1813,12 +1847,13 @@ function setXSec(topic, round, setNo) {
  * คืน {items, pages:[{n, start, kind, label, lvl, pattern, title, observe}], xSec}
  */
 function buildASetItems(topic, round, setNo, ctx) {
-  var plan = setPlan(topic, round, setNo), items = [], pages = [], inSet = {};
-  plan.pages.forEach(function (pg, pi) {
-    var kind = pageKind(pg.kind), n = pi === plan.np - 1 ? plan.total - PAGE_SIZE * (plan.np - 1) : PAGE_SIZE, got = [], obs = null, pattern = false;
-    if (pg.lvl === 0 && kind.pat) {
+  var plan = setPlan(topic, round, setNo), warm = warmPlan(topic, setNo), items = [], pages = [], inSet = {};
+  warm.concat(plan.pages).forEach(function (pg, pi) {
+    var kind = pageKind(pg.kind), n = pg.n, got = [], obs = null, pattern = false;
+    if (pg.lvl === 0 && kind.pat && !pg.check) {
       var r = kind.pat(pg.v % kind.nv);
       got = r.items.slice(0, n); obs = r.observe; pattern = true;
+      got.forEach(function (it) { inSet['PG:' + kind.id + '|' + String(it.q).replace(/\s+/g, '')] = 1; });   // หน้าสุ่มตรวจท้ายชุดต้องไม่ซ้ำข้อในหน้าแบบรูป
     } else {
       for (var i = 0; i < n; i++) {
         var it = null, base = '';
@@ -1833,23 +1868,70 @@ function buildASetItems(topic, round, setNo, ctx) {
     }
     got.forEach(function (it) {
       var base = 'PG:' + kind.id + '|' + String(it.q).replace(/\s+/g, '');
-      it.key = 'PG:' + kind.id; it.tag = kind.id; it.cat = it.cat || TOPIC_CAT[topic]; it.tier = pg.lvl; it.main = true;
+      it.key = 'PG:' + kind.id; it.tag = kind.id; it.cat = it.cat || TOPIC_CAT[topic]; it.tier = pg.lvl; it.main = !pg.warm;
+      if (pg.warm) it.warm = true;
       it.page = pi + 1; it.pattern = pattern; it.topic = topic; it.round = planRound(round);
       it.sig = base;
       if (!pattern && ctx.usedSigs) ctx.usedSigs[base] = 1;
       items.push(it);
     });
-    pages.push({ n: got.length, start: items.length - got.length, kind: kind.id, label: kind.label, lvl: pg.lvl, pattern: pattern,
-      title: (pattern ? 'หา "เคล็ดลับ" จากแบบรูป: ' : '') + kind.label, observe: obs });
+    pages.push({ n: got.length, start: items.length - got.length, kind: kind.id, label: kind.label, lvl: pg.lvl, pattern: pattern, warm: !!pg.warm, check: !!pg.check,
+      title: pg.warm ? kind.label + ' (ไม่นับเวลาเป้าหมาย)' : pg.check ? 'หน้าสุ่มตรวจ: ' + kind.label + ' (ไม่มีแบบรูปช่วย)' : (pattern ? 'หา "เคล็ดลับ" จากแบบรูป: ' : '') + kind.label, observe: obs });
   });
-  return { items: items, pages: pages, xSec: setXSec(topic, round, setNo) };
+  var wc = warm.reduce(function (a, pg) { return a + pg.n; }, 0);
+  return { items: items, pages: pages, xSec: setXSec(topic, round, setNo), warmCount: wc, warmSec: wc * 3 };
 }
 /** โจทย์ 1 ข้อของชนิดหน้าเดิม ใช้ทบทวน (ตัวเลขใหม่ แนวคิดเดิม) */
 function oneOfKind(kindId, lvl) {
   var k = pageKind(kindId); if (!k) return null;
   var it = k.one(lvl == null || lvl < 1 ? 1 : lvl);
-  it.key = 'PG:' + kindId; it.tag = kindId; it.cat = it.cat || TOPIC_CAT[k.topic || 'add']; it.tier = lvl || 1;
+  it.key = 'PG:' + kindId; it.tag = kindId; it.cat = it.cat || TOPIC_CAT[k.topic || (kindId === 'warm.muldiv' ? 'mul' : 'add')]; it.tier = lvl || 1;
   return it;
+}
+
+/* ======================= ฝึกเพิ่มเมื่อทำผิด ======================= */
+var EXTRA_PER_WRONG = 5;   // ผิดรอบแรก 1 ข้อ → ทำเพิ่ม 5 ข้อแบบเดียวกัน (ตัวเลขใหม่) ไม่จับเวลา ไม่มีเพดาน
+/**
+ * wrong = [{key:'PG:add.twod'|'GEN:AS05', tier, n}] (n = จำนวนข้อที่ผิดของแบบนั้น)
+ * คืนรายการข้อใหม่ n × EXTRA_PER_WRONG ต่อแบบ ไม่ซ้ำโจทย์เดิมในชุดเดียวกัน
+ */
+function buildExtraItems(wrong, avoid) {
+  var out = [], seen = {}; (avoid || []).forEach(function (q) { seen[String(q).replace(/\s+/g, '')] = 1; });
+  (wrong || []).forEach(function (w) {
+    var m = /^(PG|GEN):(.+)$/.exec(String(w.key || '')), n = Math.max(0, Math.min(40, Number(w.n) || 0)) * EXTRA_PER_WRONG;
+    if (!m || !n) return;
+    if (m[1] === 'PG' && !pageKind(m[2])) return;
+    if (m[1] === 'GEN' && (typeof STEP_BY_ID === 'undefined' || !STEP_BY_ID[m[2]])) return;
+    for (var i = 0; i < n; i++) {
+      var it = null;
+      for (var t = 0; t < 30; t++) {
+        it = m[1] === 'PG' ? oneOfKind(m[2], Math.max(1, Number(w.tier) || 1)) : genStep(m[2]);
+        if (!seen[String(it.q).replace(/\s+/g, '')]) break;
+      }
+      seen[String(it.q).replace(/\s+/g, '')] = 1;
+      it.key = m[1] + ':' + m[2]; it.tag = it.tag || m[2]; it.extra = true; it.main = false;
+      it.sig = 'X:' + it.key + '|' + String(it.q).replace(/\s+/g, '');
+      out.push(it);
+    }
+  });
+  return out;
+}
+
+/**
+ * คลังข้อสำรองสำหรับ "ฝึกเพิ่ม" ส่งไปกับชุดเลย (หน้าเว็บเลือกเองตามข้อที่ผิด จึงทำงานได้แม้อินเทอร์เน็ตหลุด)
+ * ต่อแบบข้อ: 5 × (จำนวนข้อแบบนั้นในชุด) สูงสุด 75 ข้อ  (ถ้าผิดเกินคลัง หน้าเว็บจะวนใช้ซ้ำ)
+ */
+function buildExtraBank(items) {
+  var cnt = {}, tier = {}, bank = {}, qs = items.map(function (i) { return i.q; });
+  items.forEach(function (i) {
+    if (!/^(PG|GEN):/.test(String(i.key || ''))) return;
+    cnt[i.key] = (cnt[i.key] || 0) + 1; tier[i.key] = Math.max(tier[i.key] || 1, Number(i.tier) || 1);
+  });
+  Object.keys(cnt).forEach(function (k) {
+    var n = Math.min(15, cnt[k]);
+    bank[k] = buildExtraItems([{ key: k, tier: tier[k], n: n }], qs).map(function (it) { delete it.sig; return it; });
+  });
+  return bank;
 }
 
 /* ======================= สถานะการหมุนเวียนและผลประเมิน ======================= */
@@ -2037,7 +2119,7 @@ function buildDailySet(ctx) {
   var pages = b.pages.slice();
   if (revA.length) pages.push({ n: revA.length, start: b.items.length, kind: 'review', label: 'ทบทวนข้อที่เคยพลาด', title: 'ทบทวนข้อที่เคยพลาด (ไม่นับในการประเมิน)', lvl: 0, pattern: false, observe: null });
   var A = mkSection('A', 'คิดเลขเร็ว', rotLabel(topic, round, setNo, rot.repeat) + ' · ' + SET_KIND_LABEL[setNo], 'drill', b.items.concat(revA),
-    { mainCount: b.items.length, pages: pages, targetSec: xSec, graded: assess, assessment: assess, topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, weekNo: rot.weekNo, xSec: xSec, ySec: ySec, skill: TOPIC_CAT[topic] });
+    { mainCount: b.items.length, warmCount: b.warmCount, warmSec: b.warmSec, extraBank: buildExtraBank(b.items.concat(revA)), pages: pages, targetSec: xSec, graded: assess, assessment: assess, topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, weekNo: rot.weekNo, xSec: xSec, ySec: ySec, skill: TOPIC_CAT[topic] });
 
   // B การสังเกต
   var bSlots = ['seq', 'seq', 'vis', 'odd', 'err', 'FIX'];
@@ -2178,8 +2260,9 @@ function selfTestAll(ok) {
   var d2 = buildDailySet(mkCtx());
   ok(JSON.stringify(d1) === JSON.stringify(d2), 'ชุดข้อวันเดียวกัน (seed เดียวกัน) ต้องออกเหมือนเดิม');
   var A = d1.sections[0], B = d1.sections[1], C = d1.sections[2], plan0 = setPlan('add', 1, 1);
-  ok(A.mainCount === 100 && A.items.length === 100 && A.targetSec === setXSec('add', 1, 1) && A.topic === 'add' && A.setNo === 1, 'ส่วน A ชุดที่ 1 สัปดาห์บวก รอบ 1 มี 100 ข้อ (ได้ ' + A.items.length + ')');
-  ok(A.items.every(function (x) { return x.topic === 'add' && x.page >= 1 && x.key.indexOf('PG:') === 0; }) && A.pages.length === 10, 'ทุกข้อใน A เป็นหัวข้อบวก แบ่งเป็น 10 หน้า');
+  ok(A.items.length === 130 && A.warmCount === 20 && A.mainCount === 130 && A.targetSec === setXSec('add', 1, 1) && A.topic === 'add' && A.setNo === 1, 'ส่วน A ชุดที่ 1 สัปดาห์บวก รอบ 1 = อุ่นเครื่อง 20 + 100 + หน้าสุ่มตรวจ 10 (ได้ ' + A.items.length + ')');
+  ok(A.extraBank && A.extraBank['PG:add.bridge10'] && A.extraBank['PG:add.bridge10'].length > 0 && A.extraBank['PG:add.bridge10'].every(function (x) { return x.extra && x.ans != null; }), 'ชุดมีคลังข้อสำรองสำหรับฝึกเพิ่ม');
+  ok(A.items.every(function (x) { return x.topic === 'add' && x.page >= 1 && x.key.indexOf('PG:') === 0; }) && A.pages.length === 13, 'ทุกข้อใน A เป็นหัวข้อ "บวก" (หรืออุ่นเครื่อง) แบ่งเป็น 13 หน้า');
   ok(d1.meta.topic === 'add' && d1.meta.round === 1 && d1.meta.setNo === 1 && d1.meta.xSec === A.targetSec && d1.meta.ySec > d1.meta.xSec, 'meta ของชุดมีหัวข้อ/รอบ/ชุด/X/Y');
   ok(B.items.length === DAILY_B_COUNT && C.items.length === DAILY_C_COUNT, 'B/C มีข้อครบ');
   ok(B.items.every(function (x) { return x.cat === 'observe'; }), 'B เป็นหมวดการสังเกต');
@@ -2261,7 +2344,8 @@ function dashDailyList(rows) {
   return rows.filter(function (r) { return r[0]; }).map(function (r) {
     var A = sec(r, 4), B = sec(r, 12), C = sec(r, 19), daily = r[1] === 'ประจำวัน';
     var pages = String(r[33] || '').split(',').filter(function (x) { return x !== ''; }).map(Number);
-    return { date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
+    var ex = String(r[37] || '').split('/');
+    return { extraRight: ex.length === 2 ? Number(ex[0]) : null, extraTotal: ex.length === 2 ? Number(ex[1]) : null, extraSec: Number(r[38]) || 0, extraRounds: Number(r[39]) || 0, date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
       slot: Number(r[28]) === 2 ? 2 : 1, topic: String(r[29] || ''), round: Number(r[30]) || 0, setNo: Number(r[31]) || 0, outcome: String(r[32] || ''), pagesSec: pages,
       x: Number(r[34]) || 0, y: Number(r[35]) || 0, repeat: String(r[36] || '') === 'ซ้ำ',
       totalMin: Number(r[26]) || 0, note: String(r[27] || ''), aPct: dashPct(A.right, A.total), bPct: dashPct(B.right, B.total), cPct: dashPct(C.right, C.total),
@@ -2323,7 +2407,7 @@ function dashTagLabel(key) {
 function dashErrorStats(itemRows, fromYmd) {
   var types = {}, cats = {}, tags = {}, wrongTotal = 0, total = 0;
   itemRows.forEach(function (r) {
-    if (String(r[0]) < fromYmd) return;
+    if (String(r[0]) < fromYmd || Number(r[18]) > 0) return;   // ข้อฝึกเพิ่มไม่รวมในสถิติข้อผิดพลาด
     var cat = String(r[3]), key = String(r[4]), ok = Number(r[7]) === 1;
     total++;
     var c = cats[cat] = cats[cat] || { cat: cat, total: 0, wrong: 0 }; c.total++;
@@ -2435,6 +2519,7 @@ var DEFAULT_SETTINGS = [
   ['MAX_REPEATS', 3, 'ถ้าทำขั้นเดิมไม่ผ่านติดกันกี่ครั้ง ให้สลับไปฝึกทักษะอื่นก่อน (และแจ้งผู้ปกครอง)'],
   ['PLACEMENT_BACKOFF', 1, 'หลังวัดระดับ ถอยกลับกี่ขั้นเพื่อเริ่มจากระดับที่คล่อง'],
   ['DELTA_THRESHOLD', 3, 'เปลี่ยนแปลงไม่เกินกี่ % ถือว่า "เท่าเดิม" (สีเทา) ในรายงานรายเดือน'],
+  ['EXTRA_MAX_ROUNDS', 1, 'ฝึกเพิ่มเมื่อทำผิด (ส่วน A): วนได้กี่รอบ 1 = ผิดในชุดหลักแล้วฝึกเพิ่มรอบเดียว (ค่าเริ่มต้น) · 2 = ถ้าผิดในข้อฝึกเพิ่มรอบแรก ให้ฝึกเพิ่มอีกรอบ (ข้อละ 5 ข้อ) ฯลฯ สูงสุด 5 · ไม่จับเวลาและไม่มีผลกับผ่าน/ไม่ผ่าน'],
   ['ASSESS_Y_FACTOR', 1.5, 'ชุดที่ 6 (ประเมินผลประจำสัปดาห์): เวลาสูงสุด Y = เวลาเป้าหมาย X × ค่านี้ — ใช้เวลา ≤ X = ผ่าน, ระหว่าง X–Y = ผ่านแต่ติดธงในอีเมล, ≥ Y หรือไม่ถึง 100% หลังแก้ = ทำหัวข้อเดิมซ้ำ 1 สัปดาห์'],
   ['TARGET_MULTIPLIER', 1, 'ปรับเวลาเป้าหมายของส่วน A ในชุดประจำวัน: 1 = ตามที่ตั้งไว้, 1.2 = ให้เวลามากขึ้น 20%, 0.9 = เข้มขึ้น 10% (ไม่มีผลกับแบบวัดระดับ/แบบวัดผล)'],
   ['PARENT_PIN', '', 'รหัสเข้า Dashboard ผู้ปกครอง (ตัวเลขหรือตัวอักษรก็ได้ ตั้งเอง) — ถ้าเว้นว่าง Dashboard จะเข้าไม่ได้ ลิงก์: ลิงก์เว็บแอป + ?page=dashboard'],
@@ -2474,9 +2559,10 @@ function getSettings() {
     });
   }
   cfg.START_DATE = cellToYmd(cfg.START_DATE);
-  ['ASSESS_Y_FACTOR', 'DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
+  ['EXTRA_MAX_ROUNDS', 'ASSESS_Y_FACTOR', 'DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
   if (!(cfg.TARGET_MULTIPLIER > 0)) cfg.TARGET_MULTIPLIER = 1;
   if (!(cfg.ASSESS_Y_FACTOR > 1)) cfg.ASSESS_Y_FACTOR = 1.5;
+  cfg.EXTRA_MAX_ROUNDS = Math.max(1, Math.min(5, Math.floor(cfg.EXTRA_MAX_ROUNDS) || 1));
   if (!(cfg.DASH_GREEN > 0)) cfg.DASH_GREEN = 85;
   if (!(cfg.DASH_YELLOW > 0)) cfg.DASH_YELLOW = 60;
   cfg.PARENT_PIN = cfg.PARENT_PIN == null ? '' : String(cfg.PARENT_PIN);
@@ -2578,7 +2664,7 @@ function touchBankUsed(codes, date) {
 }
 
 /* ---------------- ประวัติข้อ (กันโจทย์ซ้ำ + สถิติ) ---------------- */
-var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)', 'หน้า'];
+var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)', 'หน้า', 'ฝึกเพิ่ม (รอบที่)'];
 function readItemRows(maxRows) {
   var sh = getSheet(SH.items), last = sh.getLastRow();
   if (last < 2) return [];
@@ -2600,6 +2686,7 @@ function historyContext(today) {
   var rows = readItemRowsSince(ymdAdd(today, -Math.max(60, (getSettings().BANK_RECENT_DAYS || 45) + 7))), ctx = { usedSigs: {}, recentTpl: {}, bankUsed: {} };
   rows.forEach(function (r) {
     var d = r[0], key = String(r[4]), diff = ymdDiff(today, d);
+    if (Number(r[18]) > 0) return;   // ข้อฝึกเพิ่ม (คอลัมน์ = รอบที่) ไม่นับเป็นโจทย์ที่เคยออก
     if (diff <= 30 && diff >= 0) ctx.usedSigs[String(r[6])] = 1;
     if (diff <= 3 && diff >= 0 && key.indexOf('TPL:') === 0) ctx.recentTpl[key.slice(4)] = 1;
     if (key.indexOf('FIX:') === 0) { var c = key.slice(4); if (!ctx.bankUsed[c] || ctx.bankUsed[c] < d) ctx.bankUsed[c] = d; }
@@ -2653,9 +2740,9 @@ function countPendingReviews() {
 /* ---------------- ผลรายวัน ---------------- */
 function sectionCols(p) { return [p + ' คะแนนรอบแรก', p + ' เต็ม', p + ' เวลารอบแรก (วิ)', p + ' เวลารวมรวมแก้ (วิ)', p + ' เวลาเป้าหมาย/แนะนำ (วิ)', p + ' รอบแก้', p + ' ข้อผิดพลาด']; }
 var DAILY_HEAD = ['วันที่', 'ประเภท', 'A ทักษะ', 'A ขั้น'].concat(sectionCols('A'), ['A ผ่าน?'], sectionCols('B'), sectionCols('C'), ['เวลารวม (นาที)', 'สรุป'],
-  ['ชุดในวัน (1=ปกติ 2=ชดเชย)', 'หัวข้อ', 'รอบ', 'ชุดที่ (1-6)', 'ผลประเมินสัปดาห์', 'เวลาแต่ละหน้า A (วินาที)', 'เป้าหมาย X (วินาที)', 'เกณฑ์สูงสุด Y (วินาที)', 'ทำซ้ำสัปดาห์นี้?']);
+  ['ชุดในวัน (1=ปกติ 2=ชดเชย)', 'หัวข้อ', 'รอบ', 'ชุดที่ (1-6)', 'ผลประเมินสัปดาห์', 'เวลาแต่ละหน้า A (วินาที)', 'เป้าหมาย X (วินาที)', 'เกณฑ์สูงสุด Y (วินาที)', 'ทำซ้ำสัปดาห์นี้?', 'ฝึกเพิ่ม (ถูก/ทั้งหมด)', 'เวลารวมฝึกเพิ่ม (วินาที)', 'รอบฝึกเพิ่ม']);
 /** ตำแหน่งคอลัมน์ที่เพิ่มต่อท้ายใน "ผลรายวัน" */
-var DC = { slot: 28, topic: 29, round: 30, setNo: 31, outcome: 32, pages: 33, x: 34, y: 35, repeat: 36 };
+var DC = { slot: 28, topic: 29, round: 30, setNo: 31, outcome: 32, pages: 33, x: 34, y: 35, repeat: 36, extra: 37, extraSec: 38, extraRounds: 39 };
 function slotOfRow(r) { return Number(r[DC.slot]) === 2 ? 2 : 1; }
 function readDailyRows(maxRows) {
   var sh = getSheet(SH.daily), last = sh.getLastRow();
@@ -2794,6 +2881,7 @@ function getTodaySet(req) {
     var a = set.sections[0];
     set.status = 'ready'; set.date = today; set.slot = slot; set.catchup = wantCatch; set.child = childLabel(); set.childName = st.childName || '';
     set.aMaxSec = Math.max(cfg.A_MAX_SEC, (a.ySec || 0) + 300);
+    set.extraMaxRounds = cfg.EXTRA_MAX_ROUNDS;
     if (wantCatch) set.title = 'ชุดชดเชย (ไม่บังคับ) — ' + set.title;
     return set;
   } catch (e) {
@@ -2836,7 +2924,7 @@ function itemRowsFor(date, mode, sections) {
     (sec.items || []).forEach(function (it) {
       rows.push([date, mode, sec.id, it.cat, it.key, it.tag || '', it.sig || '', it.ok1 ? 1 : 0, it.tries || 1, it.revealed ? 1 : 0, round1s(it.sec || 0),
         it.ok1 ? '' : (it.errType || 'ตอบผิด'), it.review ? 1 : 0, it.cmp ? 1 : 0, it.tier || '', it.ladder == null ? '' : it.ladder,
-        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '']);
+        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '', it.extra ? (Number(it.xround) || 1) : '']);
     });
   });
   return rows;
@@ -2887,7 +2975,8 @@ function doSubmit(res) {
   var A = secs.A, sA = stats.A || secStat({ id: 'A', items: [] }), sB = stats.B || secStat({ id: 'B', items: [] }), sC = stats.C || secStat({ id: 'C', items: [] });
 
   // 1) บันทึกผลรายข้อ (คำถามสังเกต "สังเกตเห็นอะไร?" ไม่ถูกบันทึกเป็นข้อที่ให้คะแนน)
-  var itemRows = itemRowsFor(date, mode, res.sections || []);
+  var extraItems = ((A && A.extraItems) || []).slice(0, 400).map(function (i) { i.extra = true; return i; });
+  var itemRows = itemRowsFor(date, mode, (res.sections || []).concat(extraItems.length ? [{ id: 'A', items: extraItems }] : []));
   var ish = getSheet(SH.items);
   if (itemRows.length) ish.getRange(ish.getLastRow() + 1, 1, itemRows.length, ITEM_HEAD.length).setValues(itemRows);
 
@@ -2895,7 +2984,7 @@ function doSubmit(res) {
   var allItems = [].concat.apply([], (res.sections || []).map(function (s) { return s.items || []; }));
   markReviewsDone(allItems.filter(function (i) { return i.reviewId; }).map(function (i) { return i.reviewId; }), date);
   // แบบวัดระดับ/แบบวัดผลมีข้อยากเกินระดับโดยตั้งใจ จึงไม่ส่งข้อคิดเลขเข้าคิวทบทวน
-  var wrong = allItems.filter(function (i) { return !i.ok1 && i.key && (mode === 'daily' || SKILLS.indexOf(i.cat) < 0); }).map(function (i) {
+  var wrong = allItems.concat(extraItems.filter(function (i) { return i.revealed; })).filter(function (i) { return !i.ok1 && i.key && (mode === 'daily' || SKILLS.indexOf(i.cat) < 0); }).map(function (i) {
     return { key: i.key, cat: i.cat, tier: i.tier || 2, level: i.level, fixCat: i.fixCat, q: i.q };
   });
   addReviews(wrong, date);
@@ -2909,10 +2998,11 @@ function doSubmit(res) {
     var aSet = Number(A.setNo), aTopic = String(A.topic), aRound = Number(A.round), assess = aSet === ROT_SETS;
     var matches = aTopic === rot.topic && aSet === rot.setNo && aRound === planRound(rounds[rot.topic]);
     var x = Math.round(setXSec(aTopic, aRound, aSet) * cfg.TARGET_MULTIPLIER), y = Math.round(x * cfg.ASSESS_Y_FACTOR);
-    var aMain = (A.items || []).filter(function (i) { return !i.review; });
+    var aMain = (A.items || []).filter(function (i) { return !i.review && !i.warm; });
     info = { topic: aTopic, topicName: TOPIC_NAMES[aTopic], round: aRound, setNo: aSet, assessment: assess, x: x, y: y, stale: !matches, repeat: !!A.repeat,
       label: rotLabel(aTopic, aRound, aSet, !!A.repeat), totalSec: Math.round((A.firstSec || 0) + (A.correctionSec || 0)),
-      pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }) };
+      pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }),
+      extraSec: Math.round(Number(A.extraSec) || 0), extraRounds: Number(A.extraRounds) || 0, extraN: extraItems.length, extraRight: extraItems.filter(function (i) { return i.ok1; }).length, wrongFirst: (A.items || []).filter(function (i) { return !i.ok1 && !i.review; }).length };
     if (assess) {
       var o = assessOutcome({ mastered: aMain.every(function (i) { return !i.revealed; }), totalSec: info.totalSec }, x, y);
       info.outcome = o.outcome; info.reason = o.reason;
@@ -2965,7 +3055,7 @@ function doSubmit(res) {
   var modeLabel = mode === 'daily' ? 'ประจำวัน' : mode === 'placement' ? 'วัดระดับ' : 'วัดผลรายเดือน';
   var passCell = info ? (info.assessment ? outcomeCell(info.outcome) : '-') : '-';
   var dsh = getSheet(SH.daily), row = [date, modeLabel, topicName, stepLabel].concat(sectionRowCells(sA), [passCell], sectionRowCells(sB), sectionRowCells(sC), [totalMin, summary.note],
-    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat]);
+    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat, extraItems.length ? extraItems.filter(function (i) { return i.ok1; }).length + '/' + extraItems.length : '', extraItems.length ? Math.round(Number(A.extraSec) || 0) : '', extraItems.length ? (Number(A.extraRounds) || 1) : '']);
   dsh.getRange(dsh.getLastRow() + 1, 1, 1, DAILY_HEAD.length).setValues([row]);
 
   // 5) ความก้าวหน้า + แผนภูมิ
@@ -3163,7 +3253,7 @@ function sendSessionEmail(sm) {
     var hd = d.assessment ? 'ประเมินสัปดาห์' + d.topicName + ': ' + (d.outcome === 'pass' ? '🎉 ผ่าน' : d.outcome === 'flag' ? '⚑ ผ่านแต่ช้า (ติดธง)' : '↻ ต้องทำหัวข้อนี้ซ้ำ') : 'ส่วน A · ' + d.label;
     h += '<p style="margin:12px 0;padding:10px;border-radius:8px;background:' + bg + ';"><b>' + esc(hd) + '</b><br>เวลารวมส่วน A (รวมเวลาแก้) ' + mmss(d.totalSec) +
       (d.assessment ? ' · เป้า X ' + mmss(d.x) + ' · เกณฑ์สูงสุด Y ' + mmss(d.y) : ' · เป้าอ้างอิง ' + mmss(d.x)) + (d.reason ? '<br>' + esc(d.reason) : '') +
-      (d.pages && d.pages.length ? '<br><span style="font-size:13px;color:#5f6368;">เวลาแต่ละหน้า (วินาที): ' + d.pages.join(', ') + '</span>' : '') + (d.stale ? '<br><i>ชุดนี้ไม่ตรงสถานะปัจจุบัน จึงไม่เลื่อนสถานะ</i>' : '') + '</p>';
+      (d.pages && d.pages.length ? '<br><span style="font-size:13px;color:#5f6368;">เวลาแต่ละหน้า (วินาที): ' + d.pages.join(', ') + '</span>' : '') + (d.extraN ? '<br><b>ฝึกเพิ่ม (ไม่จับเวลาเทียบเป้า):</b> ผิดรอบแรก ' + d.wrongFirst + ' ข้อ → ทำเพิ่ม ' + d.extraN + ' ข้อ (' + (d.extraRounds || 1) + ' รอบ) ถูกตั้งแต่ครั้งแรก ' + d.extraRight + '/' + d.extraN + ' · ใช้เวลารวม ' + fmtSec(d.extraSec || 0) : '') + (d.stale ? '<br><i>ชุดนี้ไม่ตรงสถานะปัจจุบัน จึงไม่เลื่อนสถานะ</i>' : '') + '</p>';
   }
   h += '<table style="border-collapse:collapse;width:100%;"><tr style="background:#f1f3f4;"><th ' + tdS() + '>ส่วน</th><th ' + tdS() + '>ถูกรอบแรก</th><th ' + tdS() + '>เวลา</th><th ' + tdS() + '>รอบแก้</th><th ' + tdS() + '>ข้อผิดพลาด</th></tr>' + rows + '</table>';
   h += '<p>' + esc(sm.note || '') + '</p>';
@@ -3338,7 +3428,7 @@ function dash_getSession(pin, date) {
   dash_need_(pin);
   date = String(date || '');
   var rows = readItemRowsSince(date).filter(function (r) { return String(r[0]) === date; });
-  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length }; });
+  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length, extraRight: d.extraRight, extraTotal: d.extraTotal, extraSec: d.extraSec, extraRounds: d.extraRounds }; });
   var secName = { A: 'คิดเลขเร็ว', B: 'การสังเกต', C: 'คิดวิเคราะห์' };
   return {
     date: date, total: rows.length, sets: sets,
@@ -3443,8 +3533,8 @@ function setup() {
   bank.getRange(2, 3, Math.max(1, bank.getLastRow() - 1), 3).setWrap(true);
   bank.getRange(1, 9).setValue('← เพิ่มข้อใหม่ต่อท้ายได้เลย กรอกแค่ 5 คอลัมน์แรก (หมวด/ระดับ/โจทย์/คำตอบ/คำอธิบาย) ถ้าคำตอบไม่ใช่ตัวเลข ให้ใส่ตัวเลือกคั่นด้วย | ในคอลัมน์ F').setFontColor('#5f6368');
   // ผลและข้อมูล
-  head(SH.daily, DAILY_HEAD, [95, 90, 100, 90], ['A', 'AB', 'AC', 'AF', 'AG']);
-  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360, 50], ['A', 'E', 'F', 'G', 'Q']);
+  head(SH.daily, DAILY_HEAD, [95, 90, 100, 90], ['A', 'AB', 'AC', 'AF', 'AG', 'AL']);
+  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360, 50, 60], ['A', 'E', 'F', 'G', 'Q']);
   var lv = head(SH.levels, LEVEL_HEAD, [190, 150, 330, 140, 150, 130, 100, 260], ['G']);
   if (!lv.getRange(2, 1).getValue()) {
     SKILLS.forEach(function (sk, i) { lv.getRange(2 + i, 1).setValue(SKILL_NAMES[sk]); });

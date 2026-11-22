@@ -1,0 +1,9 @@
+const fs = require('fs');
+function patch(p, pairs) { let s = fs.readFileSync(p, 'utf8'); const crlf = s.includes('\r'); if (crlf) s = s.split('\r\n').join('\n');
+  for (let [a, b] of pairs) { if (!s.includes(a)) throw new Error('NF ' + p + ' ' + a.slice(0, 70)); s = s.replace(a, () => b); } if (crlf) s = s.split('\n').join('\r\n'); fs.writeFileSync(p, s); }
+patch('apps-script/Index.html', [["    if (SEC.stage === 'extraintro') return extraIntro();\n    if (SEC.stage === 'observe')", "    if (SEC.stage === 'extraintro') return extraIntro();\n    if (SEC.stage === 'extra') SEC.xStart = Date.now();   // กลับมาทำต่อ: เริ่มนับเวลาฝึกเพิ่มใหม่ (ไม่นับช่วงที่ปิดหน้าจอ)\n    if (SEC.stage === 'observe')"]]);
+patch('tests/gas-integration.js', [
+ ["      out.extraItems = []; out.wrongKeyed =", "      out.extraSec = 75; out.extraRounds = 1; out.extraItems = []; out.wrongKeyed ="],
+ ["  ok(A1.wrongKeyed === 0 || /ฝึกเพิ่ม \(ไม่จับเวลา\)/.test(a.mail.htmlBody), 'อีเมลสรุปแจ้งฝึกเพิ่ม');",
+  "  ok(A1.wrongKeyed === 0 || /ฝึกเพิ่ม \(ไม่จับเวลาเทียบเป้า\)/.test(a.mail.htmlBody), 'อีเมลสรุปแจ้งฝึกเพิ่ม');\n  ok(A1.wrongKeyed === 0 ? dr[38] === '' : Number(dr[38]) === 75 && Number(dr[39]) === 1, 'ผลรายวันเก็บเวลารวมฝึกเพิ่ม (75 วินาที) และจำนวนรอบ: ' + dr[38] + ' / ' + dr[39]);\n  ok(A1.wrongKeyed === 0 || /ใช้เวลารวม 1:15/.test(a.mail.htmlBody), 'อีเมลแสดงเวลารวมฝึกเพิ่ม');\n  const cfg0 = G('getSettings')().EXTRA_MAX_ROUNDS; G('setSetting')('EXTRA_MAX_ROUNDS', 9); const cfg9 = G('getSettings')().EXTRA_MAX_ROUNDS; G('setSetting')('EXTRA_MAX_ROUNDS', 0); const cfgz = G('getSettings')().EXTRA_MAX_ROUNDS; G('setSetting')('EXTRA_MAX_ROUNDS', 2); const cfg2 = G('getTodaySet')(); G('setSetting')('EXTRA_MAX_ROUNDS', 1);\n  ok(cfg0 === 1 && cfg9 === 5 && cfgz === 1 && cfg2.extraMaxRounds === 2 && G('getTodaySet')().status === 'done', 'EXTRA_MAX_ROUNDS: ค่าเริ่มต้น 1, ขอบเขต 1–5, ส่งให้หน้าเว็บทางชุดข้อ');"],
+]);

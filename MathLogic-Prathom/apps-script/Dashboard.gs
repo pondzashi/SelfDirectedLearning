@@ -82,7 +82,7 @@ function dash_getSession(pin, date) {
   dash_need_(pin);
   date = String(date || '');
   var rows = readItemRowsSince(date).filter(function (r) { return String(r[0]) === date; });
-  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length }; });
+  var sets = dashDailyList(findDailyRows(date)).map(function (d) { return { slot: d.slot, mode: d.mode, label: (d.topic ? d.topic + ' ' : '') + d.stepLabel, outcome: d.pass, x: d.x, y: d.y, totalSec: d.A.totalSec, pagesSec: d.pagesSec, pageCount: d.pagesSec.length, extraRight: d.extraRight, extraTotal: d.extraTotal, extraSec: d.extraSec, extraRounds: d.extraRounds }; });
   var secName = { A: 'คิดเลขเร็ว', B: 'การสังเกต', C: 'คิดวิเคราะห์' };
   return {
     date: date, total: rows.length, sets: sets,

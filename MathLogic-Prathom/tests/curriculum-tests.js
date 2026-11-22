@@ -121,12 +121,14 @@ console.log('== ชุดจริง (หัวข้อ × รอบ 1–4 × 
 const MAXSEC = {};
 TOPICS.forEach((t) => [1, 2, 3, 4].forEach((r) => {
   for (let s = 1; s <= 6; s++) {
-    const rp = PLAN[t][Math.min(r, 3)], tot = rp.total;
+    const rp = PLAN[t][Math.min(r, 3)], W = s < 6 ? 20 : 0, CK = (s <= 2 && r <= 2) ? 10 : 0, tot = rp.total + W + CK;
     for (let seed = 1; seed <= 4; seed++) {
       G('setRng')(G('mulberry32')(seed * 31 + s));
       const used = {}, b = G('buildASetItems')(t, r, s, { usedSigs: used }), tag = t + ' รอบ ' + r + ' ชุด ' + s + ' seed' + seed;
       ok(b.items.length === tot, tag + ' ต้อง ' + tot + ' ข้อ (ได้ ' + b.items.length + ')');
-      ok(b.pages.length === Math.ceil(tot / 10) && b.pages.every((p) => p.n >= 1 && p.n <= 10), tag + ' หน้าละไม่เกิน 10 ข้อ');
+      ok(b.pages.length === Math.ceil(rp.total / 10) + (W + CK) / 10 && b.pages.every((p) => p.n >= 1 && p.n <= 10), tag + ' หน้าละไม่เกิน 10 ข้อ');
+      ok(b.pages.filter((p) => p.warm).length === W / 10 && b.pages.slice(0, W / 10).every((p) => p.warm) && b.items.slice(0, W).every((x) => x.warm && x.main === false) && b.items.slice(W).every((x) => !x.warm && x.main), tag + ' อุ่นเครื่อง ' + W + ' ข้อ นำหน้า ไม่นับเป็นข้อหลัก');
+      ok(b.pages.filter((p) => p.check).length === CK / 10 && (!CK || b.pages[b.pages.length - 1].check && !b.pages[b.pages.length - 1].pattern), tag + ' หน้าสุ่มตรวจท้ายชุด 1–2');
       ok(b.pages.reduce((a, p) => a + p.n, 0) === b.items.length && b.pages.every((p, i) => p.start === (i ? b.pages[i - 1].start + b.pages[i - 1].n : 0)), tag + ' ช่วงหน้าต่อเนื่อง');
       b.items.forEach((it, i) => {
         const e = verify(it); if (e) ok(false, tag + ' [' + String(it.q).replace(/\n/g, '/').slice(0, 36) + '→' + it.ans + '] ' + e); else ok(true, '');
@@ -139,7 +141,7 @@ TOPICS.forEach((t) => [1, 2, 3, 4].forEach((r) => {
       ok(new Set(rs).size === rs.length, tag + ' หน้าสุ่มมีข้อซ้ำในชุด');
       ok((s <= 2 && r <= 2 ? true : b.pages.every((p) => !p.pattern)) || true, '');
       if (s >= 3) ok(b.pages.every((p) => !p.pattern), tag + ' ชุด 3–6 ต้องไม่มีหน้ารูปแบบ');
-      if (r <= 2 && s <= 2) ok(b.pages.filter((p) => p.pattern).length >= Math.ceil(b.pages.length / 2), tag + ' ชุด 1–2 ต้องเป็นหน้ารูปแบบเป็นส่วนใหญ่');
+      if (r <= 2 && s <= 2) ok(b.pages.filter((p) => p.pattern).length >= Math.ceil(b.pages.filter((p) => !p.warm && !p.check).length / 2), tag + ' ชุด 1–2 ต้องเป็นหน้ารูปแบบเป็นส่วนใหญ่');
       if (r === 3 || r === 4) ok(b.pages.every((p) => !p.pattern), tag + ' รอบ 3+ ไม่มีหน้ารูปแบบ');
       if (seed === 1) MAXSEC[t + r + '-' + s] = b.xSec;
     }
@@ -162,6 +164,21 @@ TOPICS.forEach((t) => [1, 2, 3].forEach((r) => { const x = MAXSEC[t + r + '-6'];
 }
 
 /* ---------- ตัวเลื่อนสถานะสัปดาห์ ---------- */
+console.log('== ฝึกเพิ่ม/อุ่นเครื่อง');
+{
+  G('setRng')(G('mulberry32')(77));
+  const w = [{ key: 'PG:add.plus9', tier: 1, n: 3 }, { key: 'GEN:AS05', tier: 1, n: 2 }, { key: 'PG:nope', n: 4 }, { key: 'TPL:W01', n: 2 }];
+  const ex = G('buildExtraItems')(w, ['6 + 9 =']);
+  ok(ex.length === 25, 'ผิด 3+2 ข้อ → ฝึกเพิ่ม 25 ข้อ (ไม่มีเพดาน) คีย์ที่ไม่รู้จักถูกข้าม (ได้ ' + ex.length + ')');
+  ok(ex.filter((x) => x.key === 'PG:add.plus9').length === 15 && ex.filter((x) => x.key === 'GEN:AS05').length === 10, 'แยกตามแบบที่ผิด 5 ข้อต่อ 1 ข้อที่ผิด');
+  ok(ex.every((x) => x.extra && x.main === false && !verify(x)), 'ข้อฝึกเพิ่มทุกข้อเฉลยถูกต้อง');
+  ok(new Set(ex.map((x) => x.q)).size === ex.length || ex.filter((x) => x.key === 'PG:add.plus9').length === new Set(ex.filter((x) => x.key === 'PG:add.plus9').map((x) => x.q)).size, 'ข้อฝึกเพิ่มของแบบเดียวกันไม่ซ้ำกัน');
+  ok(G('buildExtraItems')([{ key: 'PG:add.plus9', n: 40 }]).length === 200, 'ผิด 40 ข้อ = ฝึกเพิ่ม 200 ข้อ (ยังไม่มีเพดาน)');
+  ['warm.addsub', 'warm.muldiv'].forEach((k) => { for (let i = 0; i < 300; i++) { const it = G('oneOfKind')(k, 1); const e = verify(it); if (e) { ok(false, k + ' ' + it.q + ' ' + e); break; } } ok(true, ''); });
+  const b = G('buildASetItems')('mul', 1, 3, { usedSigs: {} }), bank = G('buildExtraBank')(b.items);
+  ok(Object.keys(bank).length >= 3 && Object.keys(bank).every((k) => bank[k].length > 0 && bank[k].every((x) => x.extra)), 'คลังข้อสำรองครอบคลุมทุกแบบในชุด (' + Object.keys(bank).length + ' แบบ)');
+  ok(G('warmPlan')('add', 6).length === 0 && G('warmPlan')('frac', 5).length === 2 && G('warmPlan')('mul', 1).every((p) => p.kind === 'warm.muldiv'), 'ชุดที่ 6 ไม่มีอุ่นเครื่อง · เศษส่วน/คูณใช้อุ่นเครื่องสูตรคูณ');
+}
 console.log('== ตัวเลื่อนสถานะ');
 {
   const A = G('rotAfterSet'), R0 = G('rotRounds0')(), init = G('rotInit')();

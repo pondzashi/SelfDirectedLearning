@@ -20,7 +20,8 @@ function dashDailyList(rows) {
   return rows.filter(function (r) { return r[0]; }).map(function (r) {
     var A = sec(r, 4), B = sec(r, 12), C = sec(r, 19), daily = r[1] === 'ประจำวัน';
     var pages = String(r[33] || '').split(',').filter(function (x) { return x !== ''; }).map(Number);
-    return { date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
+    var ex = String(r[37] || '').split('/');
+    return { extraRight: ex.length === 2 ? Number(ex[0]) : null, extraTotal: ex.length === 2 ? Number(ex[1]) : null, extraSec: Number(r[38]) || 0, extraRounds: Number(r[39]) || 0, date: String(r[0]), mode: String(r[1]), skillName: String(r[2] || ''), stepLabel: String(r[3] || ''), A: A, B: B, C: C, pass: String(r[11] || ''),
       slot: Number(r[28]) === 2 ? 2 : 1, topic: String(r[29] || ''), round: Number(r[30]) || 0, setNo: Number(r[31]) || 0, outcome: String(r[32] || ''), pagesSec: pages,
       x: Number(r[34]) || 0, y: Number(r[35]) || 0, repeat: String(r[36] || '') === 'ซ้ำ',
       totalMin: Number(r[26]) || 0, note: String(r[27] || ''), aPct: dashPct(A.right, A.total), bPct: dashPct(B.right, B.total), cPct: dashPct(C.right, C.total),
@@ -82,7 +83,7 @@ function dashTagLabel(key) {
 function dashErrorStats(itemRows, fromYmd) {
   var types = {}, cats = {}, tags = {}, wrongTotal = 0, total = 0;
   itemRows.forEach(function (r) {
-    if (String(r[0]) < fromYmd) return;
+    if (String(r[0]) < fromYmd || Number(r[18]) > 0) return;   // ข้อฝึกเพิ่มไม่รวมในสถิติข้อผิดพลาด
     var cat = String(r[3]), key = String(r[4]), ok = Number(r[7]) === 1;
     total++;
     var c = cats[cat] = cats[cat] || { cat: cat, total: 0, wrong: 0 }; c.total++;

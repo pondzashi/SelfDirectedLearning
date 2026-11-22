@@ -49,8 +49,9 @@ function selfTestAll(ok) {
   var d2 = buildDailySet(mkCtx());
   ok(JSON.stringify(d1) === JSON.stringify(d2), 'ชุดข้อวันเดียวกัน (seed เดียวกัน) ต้องออกเหมือนเดิม');
   var A = d1.sections[0], B = d1.sections[1], C = d1.sections[2], plan0 = setPlan('add', 1, 1);
-  ok(A.mainCount === 100 && A.items.length === 100 && A.targetSec === setXSec('add', 1, 1) && A.topic === 'add' && A.setNo === 1, 'ส่วน A ชุดที่ 1 สัปดาห์บวก รอบ 1 มี 100 ข้อ (ได้ ' + A.items.length + ')');
-  ok(A.items.every(function (x) { return x.topic === 'add' && x.page >= 1 && x.key.indexOf('PG:') === 0; }) && A.pages.length === 10, 'ทุกข้อใน A เป็นหัวข้อบวก แบ่งเป็น 10 หน้า');
+  ok(A.items.length === 130 && A.warmCount === 20 && A.mainCount === 130 && A.targetSec === setXSec('add', 1, 1) && A.topic === 'add' && A.setNo === 1, 'ส่วน A ชุดที่ 1 สัปดาห์บวก รอบ 1 = อุ่นเครื่อง 20 + 100 + หน้าสุ่มตรวจ 10 (ได้ ' + A.items.length + ')');
+  ok(A.extraBank && A.extraBank['PG:add.bridge10'] && A.extraBank['PG:add.bridge10'].length > 0 && A.extraBank['PG:add.bridge10'].every(function (x) { return x.extra && x.ans != null; }), 'ชุดมีคลังข้อสำรองสำหรับฝึกเพิ่ม');
+  ok(A.items.every(function (x) { return x.topic === 'add' && x.page >= 1 && x.key.indexOf('PG:') === 0; }) && A.pages.length === 13, 'ทุกข้อใน A เป็นหัวข้อ "บวก" (หรืออุ่นเครื่อง) แบ่งเป็น 13 หน้า');
   ok(d1.meta.topic === 'add' && d1.meta.round === 1 && d1.meta.setNo === 1 && d1.meta.xSec === A.targetSec && d1.meta.ySec > d1.meta.xSec, 'meta ของชุดมีหัวข้อ/รอบ/ชุด/X/Y');
   ok(B.items.length === DAILY_B_COUNT && C.items.length === DAILY_C_COUNT, 'B/C มีข้อครบ');
   ok(B.items.every(function (x) { return x.cat === 'observe'; }), 'B เป็นหมวดการสังเกต');

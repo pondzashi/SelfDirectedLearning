@@ -17,6 +17,7 @@ var DEFAULT_SETTINGS = [
   ['MAX_REPEATS', 3, 'ถ้าทำขั้นเดิมไม่ผ่านติดกันกี่ครั้ง ให้สลับไปฝึกทักษะอื่นก่อน (และแจ้งผู้ปกครอง)'],
   ['PLACEMENT_BACKOFF', 1, 'หลังวัดระดับ ถอยกลับกี่ขั้นเพื่อเริ่มจากระดับที่คล่อง'],
   ['DELTA_THRESHOLD', 3, 'เปลี่ยนแปลงไม่เกินกี่ % ถือว่า "เท่าเดิม" (สีเทา) ในรายงานรายเดือน'],
+  ['EXTRA_MAX_ROUNDS', 1, 'ฝึกเพิ่มเมื่อทำผิด (ส่วน A): วนได้กี่รอบ 1 = ผิดในชุดหลักแล้วฝึกเพิ่มรอบเดียว (ค่าเริ่มต้น) · 2 = ถ้าผิดในข้อฝึกเพิ่มรอบแรก ให้ฝึกเพิ่มอีกรอบ (ข้อละ 5 ข้อ) ฯลฯ สูงสุด 5 · ไม่จับเวลาและไม่มีผลกับผ่าน/ไม่ผ่าน'],
   ['ASSESS_Y_FACTOR', 1.5, 'ชุดที่ 6 (ประเมินผลประจำสัปดาห์): เวลาสูงสุด Y = เวลาเป้าหมาย X × ค่านี้ — ใช้เวลา ≤ X = ผ่าน, ระหว่าง X–Y = ผ่านแต่ติดธงในอีเมล, ≥ Y หรือไม่ถึง 100% หลังแก้ = ทำหัวข้อเดิมซ้ำ 1 สัปดาห์'],
   ['TARGET_MULTIPLIER', 1, 'ปรับเวลาเป้าหมายของส่วน A ในชุดประจำวัน: 1 = ตามที่ตั้งไว้, 1.2 = ให้เวลามากขึ้น 20%, 0.9 = เข้มขึ้น 10% (ไม่มีผลกับแบบวัดระดับ/แบบวัดผล)'],
   ['PARENT_PIN', '', 'รหัสเข้า Dashboard ผู้ปกครอง (ตัวเลขหรือตัวอักษรก็ได้ ตั้งเอง) — ถ้าเว้นว่าง Dashboard จะเข้าไม่ได้ ลิงก์: ลิงก์เว็บแอป + ?page=dashboard'],
@@ -56,9 +57,10 @@ function getSettings() {
     });
   }
   cfg.START_DATE = cellToYmd(cfg.START_DATE);
-  ['ASSESS_Y_FACTOR', 'DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
+  ['EXTRA_MAX_ROUNDS', 'ASSESS_Y_FACTOR', 'DASH_GREEN', 'DASH_YELLOW', 'TARGET_MULTIPLIER', 'MAX_REPEATS', 'PLACEMENT_BACKOFF', 'DELTA_THRESHOLD', 'A_MAX_SEC', 'LOW_BANK_THRESHOLD', 'BANK_RECENT_DAYS'].forEach(function (k) { cfg[k] = Number(cfg[k]); });
   if (!(cfg.TARGET_MULTIPLIER > 0)) cfg.TARGET_MULTIPLIER = 1;
   if (!(cfg.ASSESS_Y_FACTOR > 1)) cfg.ASSESS_Y_FACTOR = 1.5;
+  cfg.EXTRA_MAX_ROUNDS = Math.max(1, Math.min(5, Math.floor(cfg.EXTRA_MAX_ROUNDS) || 1));
   if (!(cfg.DASH_GREEN > 0)) cfg.DASH_GREEN = 85;
   if (!(cfg.DASH_YELLOW > 0)) cfg.DASH_YELLOW = 60;
   cfg.PARENT_PIN = cfg.PARENT_PIN == null ? '' : String(cfg.PARENT_PIN);
@@ -160,7 +162,7 @@ function touchBankUsed(codes, date) {
 }
 
 /* ---------------- ประวัติข้อ (กันโจทย์ซ้ำ + สถิติ) ---------------- */
-var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)', 'หน้า'];
+var ITEM_HEAD = ['วันที่', 'ประเภทชุด', 'ส่วน', 'หมวด', 'คีย์', 'ขั้น/แม่แบบ', 'ลายเซ็น', 'ถูกรอบแรก', 'จำนวนครั้งที่ตอบ', 'ต้องดูเฉลย', 'เวลา (วิ)', 'ประเภทข้อผิดพลาด', 'ข้อทบทวน', 'ข้อวัดผล', 'ระดับ', 'ลำดับบันได', 'โจทย์ (ย่อ)', 'หน้า', 'ฝึกเพิ่ม (รอบที่)'];
 function readItemRows(maxRows) {
   var sh = getSheet(SH.items), last = sh.getLastRow();
   if (last < 2) return [];
@@ -182,6 +184,7 @@ function historyContext(today) {
   var rows = readItemRowsSince(ymdAdd(today, -Math.max(60, (getSettings().BANK_RECENT_DAYS || 45) + 7))), ctx = { usedSigs: {}, recentTpl: {}, bankUsed: {} };
   rows.forEach(function (r) {
     var d = r[0], key = String(r[4]), diff = ymdDiff(today, d);
+    if (Number(r[18]) > 0) return;   // ข้อฝึกเพิ่ม (คอลัมน์ = รอบที่) ไม่นับเป็นโจทย์ที่เคยออก
     if (diff <= 30 && diff >= 0) ctx.usedSigs[String(r[6])] = 1;
     if (diff <= 3 && diff >= 0 && key.indexOf('TPL:') === 0) ctx.recentTpl[key.slice(4)] = 1;
     if (key.indexOf('FIX:') === 0) { var c = key.slice(4); if (!ctx.bankUsed[c] || ctx.bankUsed[c] < d) ctx.bankUsed[c] = d; }
@@ -235,9 +238,9 @@ function countPendingReviews() {
 /* ---------------- ผลรายวัน ---------------- */
 function sectionCols(p) { return [p + ' คะแนนรอบแรก', p + ' เต็ม', p + ' เวลารอบแรก (วิ)', p + ' เวลารวมรวมแก้ (วิ)', p + ' เวลาเป้าหมาย/แนะนำ (วิ)', p + ' รอบแก้', p + ' ข้อผิดพลาด']; }
 var DAILY_HEAD = ['วันที่', 'ประเภท', 'A ทักษะ', 'A ขั้น'].concat(sectionCols('A'), ['A ผ่าน?'], sectionCols('B'), sectionCols('C'), ['เวลารวม (นาที)', 'สรุป'],
-  ['ชุดในวัน (1=ปกติ 2=ชดเชย)', 'หัวข้อ', 'รอบ', 'ชุดที่ (1-6)', 'ผลประเมินสัปดาห์', 'เวลาแต่ละหน้า A (วินาที)', 'เป้าหมาย X (วินาที)', 'เกณฑ์สูงสุด Y (วินาที)', 'ทำซ้ำสัปดาห์นี้?']);
+  ['ชุดในวัน (1=ปกติ 2=ชดเชย)', 'หัวข้อ', 'รอบ', 'ชุดที่ (1-6)', 'ผลประเมินสัปดาห์', 'เวลาแต่ละหน้า A (วินาที)', 'เป้าหมาย X (วินาที)', 'เกณฑ์สูงสุด Y (วินาที)', 'ทำซ้ำสัปดาห์นี้?', 'ฝึกเพิ่ม (ถูก/ทั้งหมด)', 'เวลารวมฝึกเพิ่ม (วินาที)', 'รอบฝึกเพิ่ม']);
 /** ตำแหน่งคอลัมน์ที่เพิ่มต่อท้ายใน "ผลรายวัน" */
-var DC = { slot: 28, topic: 29, round: 30, setNo: 31, outcome: 32, pages: 33, x: 34, y: 35, repeat: 36 };
+var DC = { slot: 28, topic: 29, round: 30, setNo: 31, outcome: 32, pages: 33, x: 34, y: 35, repeat: 36, extra: 37, extraSec: 38, extraRounds: 39 };
 function slotOfRow(r) { return Number(r[DC.slot]) === 2 ? 2 : 1; }
 function readDailyRows(maxRows) {
   var sh = getSheet(SH.daily), last = sh.getLastRow();

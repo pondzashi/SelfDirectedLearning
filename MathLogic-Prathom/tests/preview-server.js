@@ -26,7 +26,7 @@ function makeSet(q) {
   // ย่อชุดเพื่อทดสอบเร็ว
   const n = +q.n || 0;
   if (n) set.sections.forEach(s => { if (s.pages) return; s.items = s.items.slice(0, n); if (s.mainCount) s.mainCount = Math.min(s.mainCount, n); });
-  set.status = 'ready'; set.date = '2026-11-09'; set.child = 'น้อง'; set.childName = q.name || ''; set.aMaxSec = 1200;
+  set.status = 'ready'; set.date = '2026-11-09'; set.child = 'น้อง'; set.childName = q.name || ''; set.aMaxSec = 1200; set.extraMaxRounds = +q.xr || 1;
   return set;
 }
 const MOCK = q => `<script>
