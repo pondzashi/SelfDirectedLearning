@@ -153,6 +153,9 @@
   function pageIndexOf(s, idx) { var k = 0; s.pages.forEach(function (pg, j) { if (idx >= pg.start) k = j; }); return k; }
   function mainPages(s) { return s.pages.filter(function (pg) { return pg.kind !== 'review'; }); }
   function elapsed() { return (Date.now() - SEC.start) / 1000 - (SEC.paused || 0); }
+  /** เวลารวมของหน้าอุ่นเครื่องที่ทำเสร็จแล้ว (ไม่นับเทียบเวลาเป้าหมาย X) */
+  function warmSec() { var s = SET.sections[SEC.i], t = 0; if (!hasPages(s)) return 0; s.pages.forEach(function (pg, k) { if (pg.warm && SEC.pgSecs[k] != null) t += SEC.pgSecs[k]; }); return t; }
+  function mainElapsed() { return elapsed() - warmSec(); }
   function finishPage(s, k) { if (SEC.pgIdx === k && SEC.pgSecs[k] == null) SEC.pgSecs[k] = Math.max(0, (Date.now() - SEC.pgStart) / 1000); }
   function histLine(it) {
     if (it.type === 'choice') return '';
@@ -247,7 +250,7 @@
     save();
     sectionIntro();
   }
-  function curSec() { return SET.sections[SEC.i]; }
+  function curSec() { return SEC && SEC.stage === 'extra' ? SEC.xs : SET.sections[SEC.i]; }
   function sectionIntro() {
     var s = curSec(), isDrill = s.kind === 'drill', info = '';
     if (isDrill && s.topic) {
@@ -263,12 +266,13 @@
   function resumeSection() {
     if (SEC.stage === 'intro') return sectionIntro();
     if (SEC.stage === 'fixintro') return fixIntro();
+    if (SEC.stage === 'extraintro') return extraIntro();
     if (SEC.stage === 'observe') { SEC.obsStart = Date.now(); return observeScreen(SEC.obsPage); }
     renderItem();
   }
 
   /* ---------------- แสดงข้อ ---------------- */
-  function curIndex() { return SEC.stage === 'first' ? SEC.pos : SEC.queue[SEC.qpos]; }
+  function curIndex() { return SEC.stage === 'first' || SEC.stage === 'extra' ? SEC.pos : SEC.queue[SEC.qpos]; }
   function renderItem() {
     var s = curSec(), idx = curIndex(), it = s.items[idx], r = SEC.res[idx];
     buf = ''; buf2 = ''; activeField = 0; sel = ''; locked = false; shownAt = Date.now();
@@ -276,11 +280,12 @@
     var shouldReveal = fix && r.tries >= 3;
     if (shouldReveal) r.revealed = true;
     var n = s.items.length, prog = fix ? ('แก้ข้อที่ ' + (SEC.qpos + 1) + '/' + SEC.queue.length + ' · รอบที่ ' + SEC.round) : ('ข้อ ' + (SEC.pos + 1) + '/' + n), pgTag = '', strip = '';
+    if (SEC.stage === 'extra') { prog = 'ฝึกเพิ่ม ข้อ ' + (SEC.pos + 1) + '/' + n; pgTag = '<div class="tag">🔁 ฝึกเพิ่ม · ไม่จับเวลา ค่อย ๆ คิดให้ถูก</div>'; }
     if (hasPages(s) && !fix) {
       var pk = pageIndexOf(s, idx), pg = s.pages[pk], mp = mainPages(s).length;
       if (SEC.pgIdx !== pk) { SEC.pgIdx = pk; SEC.pgStart = Date.now(); }
       prog = pg.kind === 'review' ? ('ทบทวน · ข้อ ' + (idx - pg.start + 1) + '/' + pg.n) : ('หน้า ' + (pk + 1) + '/' + mp + ' · ข้อ ' + (idx - pg.start + 1) + '/' + pg.n);
-      if (pg.pattern) pgTag = '<div class="tag">💡 ' + esc(pg.title) + '</div>';
+      if (pg.pattern || pg.warm || pg.check) pgTag = '<div class="tag">' + (pg.warm ? '🔥 ' : pg.check ? '🎯 ' : '💡 ') + esc(pg.title) + '</div>';
       strip = histStrip(s, idx);
     }
     var pct = fix ? (SEC.qpos / Math.max(1, SEC.queue.length)) : (SEC.pos / n);
@@ -399,11 +404,12 @@
     var sec = (Date.now() - shownAt) / 1000, ok = checkAnswer(it, val);
     r.tries++;
     var box = document.getElementById('qbox'), fb = document.getElementById('fb');
+    if (SEC.stage === 'extra') return submitExtra(it, r, ok, sec, val, box, fb);
     if (!fix) {
       r.sec = sec; r.ok1 = ok;
       if (!ok) r.errType = classifyError(it, val, sec);
       streak = ok ? streak + 1 : 0;
-      if (s.kind === 'drill' && SEC.mainFirstSec == null && SEC.pos === (s.mainCount || s.items.length) - 1) SEC.mainFirstSec = elapsed();
+      if (s.kind === 'drill' && SEC.mainFirstSec == null && SEC.pos === (s.mainCount || s.items.length) - 1) SEC.mainFirstSec = mainElapsed();
     } else if (ok) r.done = true;
     box.classList.add(ok ? 'ok' : 'bad');
     var m = fix ? (ok ? rnd(FIXOK) : rnd(FIXBAD)) : (ok ? (streak > 0 && streak % 5 === 0 ? 'ถูกติดกัน ' + streak + ' ข้อแล้ว 🔥' : rnd(OKMSG)) : rnd(BADMSG));
@@ -437,7 +443,7 @@
   }
   function checkCap() {
     var s = curSec();
-    if (SEC && SEC.stage === 'first' && s.kind === 'drill' && SET.aMaxSec && elapsed() > SET.aMaxSec && !locked) {
+    if (SEC && SEC.stage === 'first' && s.kind === 'drill' && SET.aMaxSec && mainElapsed() > SET.aMaxSec && !locked) {
       for (var i = SEC.pos; i < s.items.length; i++) { var r = SEC.res[i]; if (!r.tries) { r.ok1 = false; r.errType = 'หมดเวลา'; r.sec = SET.aMaxSec; } }
       if (SEC.mainFirstSec == null) SEC.mainFirstSec = SET.aMaxSec;
       endFirst(true);
@@ -446,8 +452,8 @@
   function endFirst(capped) {
     stopTimer();
     var s = curSec();
-    SEC.firstSec = elapsed();
     if (hasPages(s) && SEC.pgIdx >= 0) finishPage(s, SEC.pgIdx);
+    SEC.firstSec = mainElapsed();
     if (SEC.mainFirstSec == null) SEC.mainFirstSec = SEC.firstSec;
     SEC.queue = []; SEC.res.forEach(function (r, i) { if (!r.ok1) SEC.queue.push(i); });
     if (!SEC.queue.length) { SEC.round = 0; return sectionDone(); }
@@ -487,7 +493,7 @@
     var items = s.items.map(function (it, i) {
       var r = SEC.res[i];
       return { key: it.key, cat: it.cat, tag: it.tag, sig: it.sig, q: it.q, ok1: r.ok1, tries: r.tries || 1, revealed: r.revealed, sec: r.sec, errType: r.errType,
-        review: !!it.review, reviewId: it.reviewId || '', cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '', page: it.page || '' };
+        review: !!it.review, reviewId: it.reviewId || '', cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '', page: it.page || '', warm: !!it.warm };
     });
     var first = s.kind === 'drill' ? (SEC.mainFirstSec != null ? SEC.mainFirstSec : SEC.firstSec) : SEC.firstSec;
     var out = { id: s.id, name: s.name, kind: s.kind, skill: s.skill || '', items: items, firstSec: first, correctionSec: SEC.fixSec, totalSec: first + SEC.fixSec,
@@ -496,12 +502,70 @@
       out.topic = s.topic; out.round = s.round; out.setNo = s.setNo; out.repeat = !!s.repeat; out.assessment = !!s.assessment; out.xSec = s.xSec; out.ySec = s.ySec;
       out.pages = s.pages.map(function (pg, k) { return { pg: pg, k: k }; }).filter(function (o) { return o.pg.kind !== 'review'; }).map(function (o, j) {
         var right = 0; for (var q = o.pg.start; q < o.pg.start + o.pg.n; q++) if (SEC.res[q].ok1) right++;
-        return { page: j + 1, sec: Math.round((SEC.pgSecs[o.k] || 0) * 10) / 10, right: right, n: o.pg.n };
+        return { page: j + 1, sec: Math.round((SEC.pgSecs[o.k] || 0) * 10) / 10, right: right, n: o.pg.n, warm: !!o.pg.warm };
       });
+      out.extraItems = SEC.extraItems || [];
     }
     return out;
   }
+  /* ---------------- ฝึกเพิ่มเมื่อทำผิด (เฉพาะส่วน A ชุดประจำวัน): ผิด 1 ข้อ → เพิ่ม 5 ข้อแบบเดียวกัน ไม่จับเวลา ไม่มีเพดาน ---------------- */
+  var EXTRA_PER_WRONG = 5;
+  function shuffled(a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function buildExtraList(s) {
+    var cnt = {}, out = [];
+    s.items.forEach(function (it, i) { if (!SEC.res[i].ok1 && it.key && s.extraBank && s.extraBank[it.key]) cnt[it.key] = (cnt[it.key] || 0) + 1; });
+    Object.keys(cnt).forEach(function (k) {
+      var bank = shuffled(s.extraBank[k]), need = cnt[k] * EXTRA_PER_WRONG;
+      for (var i = 0; i < need && bank.length; i++) { var c = JSON.parse(JSON.stringify(bank[i % bank.length])); c.extra = true; out.push(c); }
+    });
+    return { items: shuffled(out), wrong: Object.keys(cnt).reduce(function (a, k) { return a + cnt[k]; }, 0) };
+  }
+  function extraIntro() {
+    var n = SEC.xs.items.length;
+    show('<div class="center"><div class="big-emoji">🔁</div><h1>ฝึกเพิ่มให้แม่นขึ้น</h1><p class="lead">รอบแรกผิด <b>' + SEC.xsWrong + '</b> ข้อ ระบบเลยให้ทำเพิ่ม <b>' + n + '</b> ข้อ แบบเดียวกับที่ผิด (ตัวเลขใหม่)<br>ไม่จับเวลา ค่อย ๆ คิดให้ถูก ถ้าตอบผิดครั้งที่ 2 จะแสดงวิธีคิดให้ดู</p><button class="btn" id="go">เริ่มฝึกเพิ่ม</button></div>');
+    document.getElementById('go').onclick = function () { SEC.stage = 'extra'; SEC.pos = 0; save(); renderItem(); };
+  }
+  function ansText(it) { return it.type === 'choice' ? esc(it.choices[+it.ans - 1]) : it.type === 'divrem' ? it.ans.split('|')[0] + ' เศษ ' + it.ans.split('|')[1] : rich(it.type === 'frac' ? '{' + it.ans + '}' : it.ans); }
+  function submitExtra(it, r, ok, sec, val, box, fb) {
+    if (r.tries === 1) { r.sec = sec; r.ok1 = ok; if (!ok) r.errType = classifyError(it, val, sec); }
+    box.classList.add(ok ? 'ok' : 'bad');
+    if (ok) { r.done = true; fb.className = 'msg ok'; fb.textContent = '✓ ' + rnd(OKMSG); save(); setTimeout(nextExtra, 450); return; }
+    if (r.tries < 2) { fb.className = 'msg bad'; fb.textContent = '✗ ยังไม่ใช่ ลองคิดอีกครั้งนะ'; save(); setTimeout(function () { renderItem(); }, 900); return; }
+    r.revealed = true; r.done = true; fb.className = 'msg bad';
+    fb.innerHTML = '✗ ดูวิธีคิดนะ: ' + rich(it.explain || '') + '<br><b>คำตอบคือ</b> ' + ansText(it);
+    save(); setTimeout(nextExtra, 3200);
+  }
+  function nextExtra() {
+    SEC.pos++;
+    if (SEC.pos >= SEC.xs.items.length) return endExtra();
+    save(); renderItem();
+  }
+  function endExtra() {
+    stopTimer();
+    SEC.extraItems = SEC.xs.items.map(function (it, i) {
+      var r = SEC.res[i];
+      return { key: it.key, cat: it.cat, tag: it.tag, q: it.q, ok1: r.ok1, tries: r.tries || 1, revealed: r.revealed, sec: r.sec, errType: r.errType, tier: it.tier || 0, extra: true };
+    });
+    SEC.res = SEC.mainRes; SEC.stage = 'done'; save();
+    sectionDone2();
+  }
   function sectionDone() {
+    stopTimer();
+    var s = curSec();
+    if (s.kind === 'drill' && s.topic && s.extraBank && !SEC.extraTried) {
+      SEC.extraTried = true;
+      var ex = buildExtraList(s);
+      if (ex.items.length) {
+        SEC.mainRes = SEC.res; SEC.xsWrong = ex.wrong;
+        SEC.xs = { id: 'A', name: 'ฝึกเพิ่ม', kind: 'extra', items: ex.items, mainCount: ex.items.length, targetSec: 0, recSec: 0 };
+        SEC.res = ex.items.map(function () { return { ok1: false, tries: 0, revealed: false, sec: 0, errType: '', done: false }; });
+        SEC.stage = 'extraintro'; save();
+        return extraIntro();
+      }
+    }
+    sectionDone2();
+  }
+  function sectionDone2() {
     stopTimer();
     var res = sectionResult(), n = res.items.length, right = res.items.filter(function (i) { return i.ok1; }).length, p = n ? right / n : 0;
     var stars = p >= 0.9 ? '⭐⭐⭐' : p >= 0.7 ? '⭐⭐' : '⭐';
@@ -510,6 +574,7 @@
     if (res.kind === 'drill' && res.targetSec) {
       var within = res.totalSec <= res.targetSec;
       timeInfo = '<p class="lead">เวลารวม <b>' + mmss(res.totalSec) + '</b> / เป้าหมาย ' + mmss(res.targetSec) + (SET.mode === 'daily' ? (within ? ' ✓ ทันเวลา!' : (res.assessment ? ' — ช้ากว่าเป้านิดหน่อย' : '')) : '') + '</p>';
+      if (res.extraItems && res.extraItems.length) timeInfo += '<p class="lead">ฝึกเพิ่ม ' + res.extraItems.length + ' ข้อ ถูกตั้งแต่ครั้งแรก ' + res.extraItems.filter(function (i) { return i.ok1; }).length + '</p>';
       if (res.pages && res.pages.length) timeInfo += '<div class="card"><b>เวลาแต่ละหน้า</b><br>' + res.pages.map(function (pg) { return 'หน้า ' + pg.page + ': ' + mmss(pg.sec) + ' (ถูก ' + pg.right + '/' + pg.n + ')'; }).join(' · ') + '</div>';
     } else timeInfo = '<p class="lead">ใช้เวลา ' + mmss(res.totalSec) + ' นาที</p>';
     RUN.done.push(res); RUN.sec = null; SEC = null; save();
@@ -550,6 +615,7 @@
       else if (d.outcome === 'pass') pass = '<p><span class="pill ok">🎉 ผ่านการประเมิน! ' + esc(d.topicName) + 'ขึ้นรอบ ' + (d.round + 1) + '</span></p>';
       else if (d.outcome === 'flag') pass = '<p><span class="pill ok">👍 ผ่านแล้ว! แต่ยังช้ากว่าเป้านิดหน่อย ฝึกให้เร็วขึ้นอีกนิด</span></p>';
       else pass = '<p><span class="pill no">' + (d.event === 'moveon' ? 'ยังไม่ผ่าน — ไปหัวข้อถัดไปก่อน แล้วค่อยกลับมาใหม่' : 'ยังไม่ผ่าน — สัปดาห์หน้าลองหัวข้อนี้อีกครั้งนะ') + '</span></p>';
+      if (d.extraN) pass += '<p class="lead">ฝึกเพิ่ม ' + d.extraN + ' ข้อ ถูกตั้งแต่ครั้งแรก ' + d.extraRight + '/' + d.extraN + '</p>';
       if (d.pages && d.pages.length) pass += '<div class="card"><b>เวลาแต่ละหน้า (ส่วน A)</b><br>' + d.pages.map(function (v, i) { return 'หน้า ' + (i + 1) + ': ' + mmss(v); }).join(' · ') + '</div>';
     }
     var pl = '';
@@ -566,10 +632,12 @@
     var s = curSec();
     function tick() {
       var el = document.getElementById('timer'); if (!el || !SEC) return;
-      var fix = SEC.stage === 'fix', secs, sub = '', over = false;
-      if (fix) { secs = (Date.now() - SEC.fixStart) / 1000; sub = 'เวลาแก้'; }
+      var fix = SEC.stage === 'fix', secs, sub = '', over = false, curPg = (s.pages && SEC.stage === 'first') ? s.pages[pageIndexOf(s, SEC.pos)] : null;
+      if (SEC.stage === 'extra') { el.firstChild.nodeValue = '∞'; el.classList.remove('over'); var sb0 = document.getElementById('tsub'); if (sb0) sb0.textContent = 'ไม่จับเวลา'; return; }
+      if (curPg && curPg.warm) { secs = (Date.now() - SEC.pgStart) / 1000; sub = 'อุ่นเครื่อง (ไม่นับเป้า)'; }
+      else if (fix) { secs = (Date.now() - SEC.fixStart) / 1000; sub = 'เวลาแก้'; }
       else {
-        secs = elapsed();
+        secs = mainElapsed();
         if (s.kind === 'drill' && s.targetSec) { sub = 'เป้า ' + mmss(s.targetSec); over = secs > s.targetSec; }
         else sub = 'แนะนำ ' + mmss(s.recSec || 0);
       }

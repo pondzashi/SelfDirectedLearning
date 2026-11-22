@@ -36,6 +36,26 @@ function obsQ(q, correct, wrongs, explain) {
 function stepItem(id) { var it = genStep(id); delete it.key; return it; }
 var TL = [2, 5, 10, 3, 4, 6, 7, 8, 9, 11, 12];
 
+/* ======================= อุ่นเครื่อง (ข้อเท็จจริงพื้นฐาน สุ่ม ไม่มีแบบรูป) ======================= */
+/** บวก/ลบเลขหลักเดียวข้ามสิบ เช่น 8 + 7, 14 − 9 (ต้นเหตุของข้อผิดในบวก/ลบสองหลัก) */
+PK('warm.addsub', null, 'อุ่นเครื่อง: บวก/ลบข้ามสิบ', [3, 3, 3], {
+  one: function () {
+    var a = ri(2, 9), b = retry(function () { return ri(2, 9); }, function (b) { return a + b > 10; });
+    if (chance(0.5)) return PI(a + ' + ' + b + ' =', a + b, { explain: 'เติม ' + a + ' ให้ครบ 10 ก่อน แล้วบวกส่วนที่เหลือ' });
+    return PI((a + b) + ' − ' + b + ' =', a, { explain: 'ลบให้ถึง 10 ก่อน แล้วลบส่วนที่เหลือ หรือคิดว่า ' + b + ' + ? = ' + (a + b) });
+  }
+});
+/** สูตรคูณและหารผกผัน 2–9 (ใช้กับสัปดาห์คูณ หาร เศษส่วน) */
+PK('warm.muldiv', null, 'อุ่นเครื่อง: สูตรคูณ/หาร', [3, 3, 3], {
+  one: function () {
+    var a = ri(2, 9), b = ri(2, 9);
+    if (chance(0.6)) return PI(a + ' × ' + b + ' =', a * b, { explain: 'สูตรคูณแม่ ' + a });
+    return PI((a * b) + ' ÷ ' + a + ' =', b, { explain: a + ' × ? = ' + (a * b) });
+  }
+});
+var WARM_KIND = { add: 'warm.addsub', sub: 'warm.addsub', mul: 'warm.muldiv', div: 'warm.muldiv', frac: 'warm.muldiv' };
+var WARM_PAGES = 2;   // 20 ข้อ ก่อนชุดที่ 1–5 (ชุดที่ 6 ไม่มี เพื่อให้ผลประเมินเทียบกันได้)
+
 /* ======================= บวก ======================= */
 PK('add.pairs10', 'add', 'บวกให้ครบสิบ', [3, 4, 5], {
   nv: 4,
@@ -480,7 +500,21 @@ function setPlan(topic, round, setNo) {
       for (var i = 0; i < e[2]; i++) pages.push({ kind: e[0], lvl: e[1], v: (e[3] || 0) + i });
     });
   }
-  return { total: total, pages: pages.slice(0, np), np: np };
+  pages = pages.slice(0, np);
+  pages.forEach(function (pg, i) { pg.n = i === np - 1 ? total - PAGE_SIZE * (np - 1) : PAGE_SIZE; });
+  // ชุดที่ 1–2 (หน้าแบบรูป): ท้ายชุดมีหน้าสุ่มตรวจ 1 หน้า (ไม่มีแบบรูป) กันการตอบตามแบบรูปอย่างเดียว
+  if (!rp.steps && setNo <= 2) {
+    var ents = rp.sets[setNo - 1], last = ents[ents.length - 1][0];
+    pages.push({ kind: last, lvl: 1, v: 0, n: PAGE_SIZE, check: true });
+    total += PAGE_SIZE; np += 1;
+  }
+  return { total: total, pages: pages, np: np };
+}
+/** หน้าอุ่นเครื่องของชุด (ไม่นับใน X ไม่นับในการประเมิน) */
+function warmPlan(topic, setNo) {
+  if (setNo >= ROT_SETS || !WARM_KIND[topic]) return [];
+  var out = []; for (var i = 0; i < WARM_PAGES; i++) out.push({ kind: WARM_KIND[topic], lvl: 1, v: 0, n: PAGE_SIZE, warm: true });
+  return out;
 }
 function pageKind(id) {
   if (id.indexOf('step:') === 0) return stepKind(id.slice(5));
@@ -490,7 +524,7 @@ function pageSpp(kindId, lvl) { var k = pageKind(kindId); return k.spp[Math.min(
 /** เวลาเป้าหมาย X ของชุด (วินาที) = Σ ข้อ × วินาทีต่อข้อ */
 function setXSec(topic, round, setNo) {
   var p = setPlan(topic, round, setNo), s = 0;
-  p.pages.forEach(function (pg, i) { var n = i === p.np - 1 ? p.total - PAGE_SIZE * (p.np - 1) : PAGE_SIZE; s += n * pageSpp(pg.kind, pg.lvl); });
+  p.pages.forEach(function (pg) { s += pg.n * pageSpp(pg.kind, pg.lvl); });
   return Math.round(s);
 }
 
@@ -500,12 +534,13 @@ function setXSec(topic, round, setNo) {
  * คืน {items, pages:[{n, start, kind, label, lvl, pattern, title, observe}], xSec}
  */
 function buildASetItems(topic, round, setNo, ctx) {
-  var plan = setPlan(topic, round, setNo), items = [], pages = [], inSet = {};
-  plan.pages.forEach(function (pg, pi) {
-    var kind = pageKind(pg.kind), n = pi === plan.np - 1 ? plan.total - PAGE_SIZE * (plan.np - 1) : PAGE_SIZE, got = [], obs = null, pattern = false;
-    if (pg.lvl === 0 && kind.pat) {
+  var plan = setPlan(topic, round, setNo), warm = warmPlan(topic, setNo), items = [], pages = [], inSet = {};
+  warm.concat(plan.pages).forEach(function (pg, pi) {
+    var kind = pageKind(pg.kind), n = pg.n, got = [], obs = null, pattern = false;
+    if (pg.lvl === 0 && kind.pat && !pg.check) {
       var r = kind.pat(pg.v % kind.nv);
       got = r.items.slice(0, n); obs = r.observe; pattern = true;
+      got.forEach(function (it) { inSet['PG:' + kind.id + '|' + String(it.q).replace(/\s+/g, '')] = 1; });   // หน้าสุ่มตรวจท้ายชุดต้องไม่ซ้ำข้อในหน้าแบบรูป
     } else {
       for (var i = 0; i < n; i++) {
         var it = null, base = '';
@@ -520,23 +555,70 @@ function buildASetItems(topic, round, setNo, ctx) {
     }
     got.forEach(function (it) {
       var base = 'PG:' + kind.id + '|' + String(it.q).replace(/\s+/g, '');
-      it.key = 'PG:' + kind.id; it.tag = kind.id; it.cat = it.cat || TOPIC_CAT[topic]; it.tier = pg.lvl; it.main = true;
+      it.key = 'PG:' + kind.id; it.tag = kind.id; it.cat = it.cat || TOPIC_CAT[topic]; it.tier = pg.lvl; it.main = !pg.warm;
+      if (pg.warm) it.warm = true;
       it.page = pi + 1; it.pattern = pattern; it.topic = topic; it.round = planRound(round);
       it.sig = base;
       if (!pattern && ctx.usedSigs) ctx.usedSigs[base] = 1;
       items.push(it);
     });
-    pages.push({ n: got.length, start: items.length - got.length, kind: kind.id, label: kind.label, lvl: pg.lvl, pattern: pattern,
-      title: (pattern ? 'หา "เคล็ดลับ" จากแบบรูป: ' : '') + kind.label, observe: obs });
+    pages.push({ n: got.length, start: items.length - got.length, kind: kind.id, label: kind.label, lvl: pg.lvl, pattern: pattern, warm: !!pg.warm, check: !!pg.check,
+      title: pg.warm ? kind.label + ' (ไม่นับเวลาเป้าหมาย)' : pg.check ? 'หน้าสุ่มตรวจ: ' + kind.label + ' (ไม่มีแบบรูปช่วย)' : (pattern ? 'หา "เคล็ดลับ" จากแบบรูป: ' : '') + kind.label, observe: obs });
   });
-  return { items: items, pages: pages, xSec: setXSec(topic, round, setNo) };
+  var wc = warm.reduce(function (a, pg) { return a + pg.n; }, 0);
+  return { items: items, pages: pages, xSec: setXSec(topic, round, setNo), warmCount: wc, warmSec: wc * 3 };
 }
 /** โจทย์ 1 ข้อของชนิดหน้าเดิม ใช้ทบทวน (ตัวเลขใหม่ แนวคิดเดิม) */
 function oneOfKind(kindId, lvl) {
   var k = pageKind(kindId); if (!k) return null;
   var it = k.one(lvl == null || lvl < 1 ? 1 : lvl);
-  it.key = 'PG:' + kindId; it.tag = kindId; it.cat = it.cat || TOPIC_CAT[k.topic || 'add']; it.tier = lvl || 1;
+  it.key = 'PG:' + kindId; it.tag = kindId; it.cat = it.cat || TOPIC_CAT[k.topic || (kindId === 'warm.muldiv' ? 'mul' : 'add')]; it.tier = lvl || 1;
   return it;
+}
+
+/* ======================= ฝึกเพิ่มเมื่อทำผิด ======================= */
+var EXTRA_PER_WRONG = 5;   // ผิดรอบแรก 1 ข้อ → ทำเพิ่ม 5 ข้อแบบเดียวกัน (ตัวเลขใหม่) ไม่จับเวลา ไม่มีเพดาน
+/**
+ * wrong = [{key:'PG:add.twod'|'GEN:AS05', tier, n}] (n = จำนวนข้อที่ผิดของแบบนั้น)
+ * คืนรายการข้อใหม่ n × EXTRA_PER_WRONG ต่อแบบ ไม่ซ้ำโจทย์เดิมในชุดเดียวกัน
+ */
+function buildExtraItems(wrong, avoid) {
+  var out = [], seen = {}; (avoid || []).forEach(function (q) { seen[String(q).replace(/\s+/g, '')] = 1; });
+  (wrong || []).forEach(function (w) {
+    var m = /^(PG|GEN):(.+)$/.exec(String(w.key || '')), n = Math.max(0, Math.min(40, Number(w.n) || 0)) * EXTRA_PER_WRONG;
+    if (!m || !n) return;
+    if (m[1] === 'PG' && !pageKind(m[2])) return;
+    if (m[1] === 'GEN' && (typeof STEP_BY_ID === 'undefined' || !STEP_BY_ID[m[2]])) return;
+    for (var i = 0; i < n; i++) {
+      var it = null;
+      for (var t = 0; t < 30; t++) {
+        it = m[1] === 'PG' ? oneOfKind(m[2], Math.max(1, Number(w.tier) || 1)) : genStep(m[2]);
+        if (!seen[String(it.q).replace(/\s+/g, '')]) break;
+      }
+      seen[String(it.q).replace(/\s+/g, '')] = 1;
+      it.key = m[1] + ':' + m[2]; it.tag = it.tag || m[2]; it.extra = true; it.main = false;
+      it.sig = 'X:' + it.key + '|' + String(it.q).replace(/\s+/g, '');
+      out.push(it);
+    }
+  });
+  return out;
+}
+
+/**
+ * คลังข้อสำรองสำหรับ "ฝึกเพิ่ม" ส่งไปกับชุดเลย (หน้าเว็บเลือกเองตามข้อที่ผิด จึงทำงานได้แม้อินเทอร์เน็ตหลุด)
+ * ต่อแบบข้อ: 5 × (จำนวนข้อแบบนั้นในชุด) สูงสุด 75 ข้อ  (ถ้าผิดเกินคลัง หน้าเว็บจะวนใช้ซ้ำ)
+ */
+function buildExtraBank(items) {
+  var cnt = {}, tier = {}, bank = {}, qs = items.map(function (i) { return i.q; });
+  items.forEach(function (i) {
+    if (!/^(PG|GEN):/.test(String(i.key || ''))) return;
+    cnt[i.key] = (cnt[i.key] || 0) + 1; tier[i.key] = Math.max(tier[i.key] || 1, Number(i.tier) || 1);
+  });
+  Object.keys(cnt).forEach(function (k) {
+    var n = Math.min(15, cnt[k]);
+    bank[k] = buildExtraItems([{ key: k, tier: tier[k], n: n }], qs).map(function (it) { delete it.sig; return it; });
+  });
+  return bank;
 }
 
 /* ======================= สถานะการหมุนเวียนและผลประเมิน ======================= */

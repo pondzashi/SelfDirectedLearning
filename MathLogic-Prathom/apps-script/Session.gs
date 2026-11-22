@@ -107,7 +107,7 @@ function itemRowsFor(date, mode, sections) {
     (sec.items || []).forEach(function (it) {
       rows.push([date, mode, sec.id, it.cat, it.key, it.tag || '', it.sig || '', it.ok1 ? 1 : 0, it.tries || 1, it.revealed ? 1 : 0, round1s(it.sec || 0),
         it.ok1 ? '' : (it.errType || 'ตอบผิด'), it.review ? 1 : 0, it.cmp ? 1 : 0, it.tier || '', it.ladder == null ? '' : it.ladder,
-        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '']);
+        String(it.q || '').replace(/\s+/g, ' ').slice(0, 60), it.page || '', it.extra ? 1 : '']);
     });
   });
   return rows;
@@ -158,7 +158,8 @@ function doSubmit(res) {
   var A = secs.A, sA = stats.A || secStat({ id: 'A', items: [] }), sB = stats.B || secStat({ id: 'B', items: [] }), sC = stats.C || secStat({ id: 'C', items: [] });
 
   // 1) บันทึกผลรายข้อ (คำถามสังเกต "สังเกตเห็นอะไร?" ไม่ถูกบันทึกเป็นข้อที่ให้คะแนน)
-  var itemRows = itemRowsFor(date, mode, res.sections || []);
+  var extraItems = ((A && A.extraItems) || []).slice(0, 400).map(function (i) { i.extra = true; return i; });
+  var itemRows = itemRowsFor(date, mode, (res.sections || []).concat(extraItems.length ? [{ id: 'A', items: extraItems }] : []));
   var ish = getSheet(SH.items);
   if (itemRows.length) ish.getRange(ish.getLastRow() + 1, 1, itemRows.length, ITEM_HEAD.length).setValues(itemRows);
 
@@ -166,7 +167,7 @@ function doSubmit(res) {
   var allItems = [].concat.apply([], (res.sections || []).map(function (s) { return s.items || []; }));
   markReviewsDone(allItems.filter(function (i) { return i.reviewId; }).map(function (i) { return i.reviewId; }), date);
   // แบบวัดระดับ/แบบวัดผลมีข้อยากเกินระดับโดยตั้งใจ จึงไม่ส่งข้อคิดเลขเข้าคิวทบทวน
-  var wrong = allItems.filter(function (i) { return !i.ok1 && i.key && (mode === 'daily' || SKILLS.indexOf(i.cat) < 0); }).map(function (i) {
+  var wrong = allItems.concat(extraItems.filter(function (i) { return i.revealed; })).filter(function (i) { return !i.ok1 && i.key && (mode === 'daily' || SKILLS.indexOf(i.cat) < 0); }).map(function (i) {
     return { key: i.key, cat: i.cat, tier: i.tier || 2, level: i.level, fixCat: i.fixCat, q: i.q };
   });
   addReviews(wrong, date);
@@ -180,10 +181,11 @@ function doSubmit(res) {
     var aSet = Number(A.setNo), aTopic = String(A.topic), aRound = Number(A.round), assess = aSet === ROT_SETS;
     var matches = aTopic === rot.topic && aSet === rot.setNo && aRound === planRound(rounds[rot.topic]);
     var x = Math.round(setXSec(aTopic, aRound, aSet) * cfg.TARGET_MULTIPLIER), y = Math.round(x * cfg.ASSESS_Y_FACTOR);
-    var aMain = (A.items || []).filter(function (i) { return !i.review; });
+    var aMain = (A.items || []).filter(function (i) { return !i.review && !i.warm; });
     info = { topic: aTopic, topicName: TOPIC_NAMES[aTopic], round: aRound, setNo: aSet, assessment: assess, x: x, y: y, stale: !matches, repeat: !!A.repeat,
       label: rotLabel(aTopic, aRound, aSet, !!A.repeat), totalSec: Math.round((A.firstSec || 0) + (A.correctionSec || 0)),
-      pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }) };
+      pages: (A.pages || []).map(function (p) { return Math.round(p.sec || 0); }),
+      extraN: extraItems.length, extraRight: extraItems.filter(function (i) { return i.ok1; }).length, wrongFirst: (A.items || []).filter(function (i) { return !i.ok1 && !i.review; }).length };
     if (assess) {
       var o = assessOutcome({ mastered: aMain.every(function (i) { return !i.revealed; }), totalSec: info.totalSec }, x, y);
       info.outcome = o.outcome; info.reason = o.reason;
@@ -236,7 +238,7 @@ function doSubmit(res) {
   var modeLabel = mode === 'daily' ? 'ประจำวัน' : mode === 'placement' ? 'วัดระดับ' : 'วัดผลรายเดือน';
   var passCell = info ? (info.assessment ? outcomeCell(info.outcome) : '-') : '-';
   var dsh = getSheet(SH.daily), row = [date, modeLabel, topicName, stepLabel].concat(sectionRowCells(sA), [passCell], sectionRowCells(sB), sectionRowCells(sC), [totalMin, summary.note],
-    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat]);
+    [slot, wk.topic, wk.round, wk.setNo, wk.outcome, wk.pages, wk.x, wk.y, wk.repeat, extraItems.length ? extraItems.filter(function (i) { return i.ok1; }).length + '/' + extraItems.length : '']);
   dsh.getRange(dsh.getLastRow() + 1, 1, 1, DAILY_HEAD.length).setValues([row]);
 
   // 5) ความก้าวหน้า + แผนภูมิ

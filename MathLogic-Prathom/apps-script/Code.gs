@@ -82,8 +82,8 @@ function setup() {
   bank.getRange(2, 3, Math.max(1, bank.getLastRow() - 1), 3).setWrap(true);
   bank.getRange(1, 9).setValue('← เพิ่มข้อใหม่ต่อท้ายได้เลย กรอกแค่ 5 คอลัมน์แรก (หมวด/ระดับ/โจทย์/คำตอบ/คำอธิบาย) ถ้าคำตอบไม่ใช่ตัวเลข ให้ใส่ตัวเลือกคั่นด้วย | ในคอลัมน์ F').setFontColor('#5f6368');
   // ผลและข้อมูล
-  head(SH.daily, DAILY_HEAD, [95, 90, 100, 90], ['A', 'AB', 'AC', 'AF', 'AG']);
-  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360, 50], ['A', 'E', 'F', 'G', 'Q']);
+  head(SH.daily, DAILY_HEAD, [95, 90, 100, 90], ['A', 'AB', 'AC', 'AF', 'AG', 'AL']);
+  head(SH.items, ITEM_HEAD, [95, 80, 50, 80, 110, 80, 220, 70, 70, 70, 70, 140, 60, 60, 50, 60, 360, 50, 60], ['A', 'E', 'F', 'G', 'Q']);
   var lv = head(SH.levels, LEVEL_HEAD, [190, 150, 330, 140, 150, 130, 100, 260], ['G']);
   if (!lv.getRange(2, 1).getValue()) {
     SKILLS.forEach(function (sk, i) { lv.getRange(2 + i, 1).setValue(SKILL_NAMES[sk]); });

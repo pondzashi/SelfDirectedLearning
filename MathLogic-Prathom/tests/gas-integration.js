@@ -105,13 +105,19 @@ function botResult(set, speed) {
       if (BOT.reveal && sec.kind === 'drill' && !it.review && !revealedOne) { revealedOne = true; revealed = true; }
       if (sec.kind === 'drill' && sec.pages && !it.review) { const k = pageOf(idx); pageSec[k] += s; pageRight[k] += ok1 ? 1 : 0; }
       return { key: it.key, cat: it.cat, tag: it.tag, sig: it.sig, q: it.q, ok1, tries, revealed, sec: s, errType: ok1 ? '' : classify(it, 'x', s), review: !!it.review, reviewId: it.reviewId || '',
-        cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '', page: it.page || '' };
+        cmp: !!it.cmp, ladder: it.ladder == null ? null : it.ladder, tier: it.tier || 0, level: it.level || 0, fixCat: it.fixCat || '', page: it.page || '', warm: !!it.warm };
     });
     const corr = wrong * 9;
     const firstSec = sec.kind === 'drill' ? sec.items.reduce((a, it, i) => a + (it.main !== false && !it.review ? items[i].sec : 0), 0) : first;
     const out = { id: sec.id, name: sec.name, kind: sec.kind, skill: sec.skill || '', items, firstSec, correctionSec: corr, totalSec: firstSec + corr, rounds: wrong ? maxTries - 1 : 0, targetSec: sec.targetSec || 0, recSec: sec.recSec || 0, mainCount: sec.mainCount || items.length };
+    if (sec.id === 'A' && sec.topic && sec.extraBank) { // เด็กจำลองทำ "ฝึกเพิ่ม": ผิดรอบแรก 1 ข้อ → 5 ข้อ จากคลังข้อสำรอง
+      const cnt = {}; items.forEach(i => { if (!i.ok1 && sec.extraBank[i.key]) cnt[i.key] = (cnt[i.key] || 0) + 1; });
+      out.extraItems = []; out.wrongKeyed = Object.values(cnt).reduce((a, b) => a + b, 0);
+      Object.keys(cnt).forEach(k => { for (let i = 0; i < cnt[k] * 5; i++) { const b = sec.extraBank[k][i % sec.extraBank[k].length], ok1 = botRng() < 0.85;
+        out.extraItems.push({ key: b.key, cat: b.cat, tag: b.tag, q: b.q, ok1, tries: ok1 ? 1 : 2, revealed: !ok1 && botRng() < 0.5, sec: 6, errType: ok1 ? '' : 'คำนวณพลาด', tier: b.tier || 0, extra: true }); } });
+    }
     if (sec.id === 'A' && sec.topic) Object.assign(out, { topic: sec.topic, round: sec.round, setNo: sec.setNo, repeat: !!sec.repeat, assessment: !!sec.assessment, xSec: sec.xSec, ySec: sec.ySec,
-      pages: (sec.pages || []).filter(pg => pg.kind !== 'review').map((pg, j) => ({ page: j + 1, sec: pageSec[j], right: pageRight[j], n: pg.n })) });
+      pages: (sec.pages || []).filter(pg => pg.kind !== 'review').map((pg, j) => ({ page: j + 1, sec: pageSec[j], right: pageRight[j], n: pg.n, warm: !!pg.warm })) });
     return out;
   });
   return { childName: ' น้องต้น ', date: set.date, slot: set.slot || 1, mode: set.mode, placementDay: set.placementDay == null ? null : set.placementDay, title: set.title, totalSec: sections.reduce((a, s) => a + s.totalSec, 0), sections };
@@ -319,6 +325,18 @@ const rotOf = () => G('readRotation')();
 // 1) จันทร์ ชุดที่ 1 · ข้ามอังคาร/พุธ · พฤหัส ชุดที่ 2 + ชดเชย ชุดที่ 3
 let a = play('2026-11-02');
 ok(a.set.meta.topic === 'add' && a.set.meta.setNo === 1 && a.r.ok && a.set.slot === 1, 'เซนาริโอ: จันทร์ = บวก ชุด 1');
+{
+  const A1 = a.payload.sections[0], set1 = a.set.sections[0];
+  ok(set1.warmCount === 20 && set1.items.slice(0, 20).every(i => i.warm && i.main === false) && set1.items.length === 130, 'ชุดที่ 1: อุ่นเครื่อง 20 ข้อ + 100 + หน้าสุ่มตรวจ 10');
+  ok(set1.xSec === G('setXSec')('add', 1, 1) && set1.xSec < set1.xSec + 1 && A1.pages.filter(p => p.warm).length === 2, 'อุ่นเครื่องไม่รวมใน X');
+  ok((A1.extraItems || []).length === 5 * A1.wrongKeyed, 'ฝึกเพิ่ม = 5 × จำนวนข้อที่ผิดรอบแรก (ไม่มีเพดาน): ผิด ' + A1.wrongKeyed + ' ได้ ' + (A1.extraItems || []).length);
+  const isheet = book.getSheetByName('ผลรายข้อ'); const rows1 = isheet.getRange(2, 1, isheet.getLastRow() - 1, 19).getValues().filter(r => r[0] === '2026-11-02' && r[18] === 1);
+  ok(rows1.length === (A1.extraItems || []).length, 'ข้อฝึกเพิ่มบันทึกในผลรายข้อ (คอลัมน์ ฝึกเพิ่ม=1) ' + rows1.length);
+  const dr = G('findDailyRows')('2026-11-02')[0];
+  ok(A1.wrongKeyed === 0 ? dr[37] === '' : new RegExp('^\\d+/' + A1.extraItems.length + '$').test(String(dr[37])), 'ผลรายวันบันทึก ฝึกเพิ่ม ถูก/ทั้งหมด: ' + dr[37]);
+  ok(A1.wrongKeyed === 0 || /ฝึกเพิ่ม \(ไม่จับเวลา\)/.test(a.mail.htmlBody), 'อีเมลสรุปแจ้งฝึกเพิ่ม');
+  ok(G('historyContext')('2026-11-02').usedSigs && !Object.keys(G('historyContext')('2026-11-02').usedSigs).some(k => /^X:/.test(k)), 'ข้อฝึกเพิ่มไม่ปนในประวัติโจทย์ที่เคยออก');
+}
 let again = G('getTodaySet')();
 ok(again.status === 'done' && again.catchup && again.catchup.available && again.catchup.remaining === 5, 'ทำชุดปกติแล้วมีปุ่มชดเชย (เหลือ 5 ชุด)');
 a = play('2026-11-05'); // ข้ามอังคาร พุธ
@@ -381,7 +399,7 @@ ok(mulTrend.points.length === 2 && mulTrend.points[0].outcome === 'ไม่ผ�
 const c5 = b2.calendar.find(c => c.date === '2026-11-05');
 ok(c5 && (c5.status === 'pass' || c5.status === 'done'), 'Dashboard: วันที่มี 2 ชุดแสดงสถานะวันเดียว');
 const dses = G('dash_getSession')('4321', '2026-11-05');
-ok(dses.sets.length === 2 && dses.sets.every(x => x.pageCount === 10), 'Dashboard: รายละเอียดวัน 2 ชุด + เวลาแต่ละหน้า');
+ok(dses.sets.length === 2 && dses.sets.every(x => x.pageCount >= 12 && x.pageCount <= 13), 'Dashboard: รายละเอียดวัน 2 ชุด + เวลาแต่ละหน้า');
 if (process.env.DASH_OUT2) { b2.__ses = dses; fs.writeFileSync(process.env.DASH_OUT2, JSON.stringify(b2)); }
 ok(b2.kpi.sessions === G('readDailyRows')(500).length, 'Dashboard: นับชุดทั้งหมดตรงกับแถวผลรายวัน');
 

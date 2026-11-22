@@ -116,7 +116,7 @@ function buildDailySet(ctx) {
   var pages = b.pages.slice();
   if (revA.length) pages.push({ n: revA.length, start: b.items.length, kind: 'review', label: 'ทบทวนข้อที่เคยพลาด', title: 'ทบทวนข้อที่เคยพลาด (ไม่นับในการประเมิน)', lvl: 0, pattern: false, observe: null });
   var A = mkSection('A', 'คิดเลขเร็ว', rotLabel(topic, round, setNo, rot.repeat) + ' · ' + SET_KIND_LABEL[setNo], 'drill', b.items.concat(revA),
-    { mainCount: b.items.length, pages: pages, targetSec: xSec, graded: assess, assessment: assess, topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, weekNo: rot.weekNo, xSec: xSec, ySec: ySec, skill: TOPIC_CAT[topic] });
+    { mainCount: b.items.length, warmCount: b.warmCount, warmSec: b.warmSec, extraBank: buildExtraBank(b.items.concat(revA)), pages: pages, targetSec: xSec, graded: assess, assessment: assess, topic: topic, topicName: TOPIC_NAMES[topic], round: round, setNo: setNo, repeat: !!rot.repeat, weekNo: rot.weekNo, xSec: xSec, ySec: ySec, skill: TOPIC_CAT[topic] });
 
   // B การสังเกต
   var bSlots = ['seq', 'seq', 'vis', 'odd', 'err', 'FIX'];
